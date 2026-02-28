@@ -1,6 +1,7 @@
 from modules.portscan import run_portscan
 from modules.dirbuster import run_dirbuster
 from modules.subdomain_enum import run_subdomain_enum
+from modules.technology_stack import run_tech_stack
 import re
 import argparse
 import requests
@@ -25,7 +26,7 @@ def main():
     )
     parser.add_argument(
         '-o', '--only',
-        choices=['all', 'portscan', 'dirbuster', 'subdomain'],
+        choices=['all', 'portscan', 'dirbuster', 'subdomain', 'techstack'],
         default='all',
         help='Run only a specific module'
     )
@@ -39,7 +40,6 @@ def main():
     target = sanitize_target(args.target)
     only = args.only
 
-    # Print banner only after valid target is provided
     banner = """
     ███████╗ █████╗ ███████╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ ███╗   ██╗
     ██╔════╝██╔══██╗██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔════╝██╔═══██╗████╗  ██║
@@ -68,6 +68,13 @@ def main():
         run_subdomain_enum(target, target, None, args.verbose)
         return
 
+    if only == 'techstack':
+        scan_results = run_portscan(target, args.verbose)
+        ports = scan_results["ports"]
+        hostname = scan_results["hostname"]
+        run_tech_stack(target, hostname, ports)
+        return
+
     scan_results = run_portscan(target, args.verbose)
     ports = scan_results["ports"]
     hostname = scan_results["hostname"]
@@ -76,54 +83,40 @@ def main():
     for p in ports:
         print(f" - {p['port']}/{p['protocol']} ({p['service']})")
 
+
+    # technology stack detection
+    run_tech_stack(target, hostname, ports)
+
     if hostname:
         print(f"\n[+] Hostname: {hostname}")
         run_subdomain_enum(hostname, target, ports, args.verbose)
     else:
         print("\n[*] No hostname found in SSL certificate.")
 
-    # Try to run dirbuster on web services; probe to find responsive protocol
-    requested_proto = None
-    if args.target.lower().startswith('https://'):
-        requested_proto = 'https'
-    elif args.target.lower().startswith('http://'):
-        requested_proto = 'http'
 
-    proto_available = set()
+    # run dirbuster 
+    web_targets = []
+
     for p in ports:
-        if p.get("port") == "80":
-            proto_available.add('http')
-        elif p.get("port") == "443":
-            proto_available.add('https')
+        service = p.get("service", "").lower()
+        port = p.get("port")
 
-    # Build probe list: prefer user-requested protocol if available
-    if proto_available:
-        if requested_proto in proto_available:
-            to_probe = [requested_proto] + [
-                p for p in ['https', 'http']
-                if p in proto_available and p != requested_proto
-            ]
-        else:
-            to_probe = ['http', 'https'] if 'http' in proto_available else ['https']
-    else:
-        to_probe = [requested_proto] if requested_proto else ['http', 'https']
+        if not port:
+            continue
 
-    succeeded = False
+        if "https" in service:
+            url = f"https://{target}" if port == "443" else f"https://{target}:{port}"
+            web_targets.append(url)
 
-    for proto in to_probe:
-        url = f"{proto}://{target}"
-        try:
-            requests.get(url, timeout=3, verify=False, allow_redirects=False)
+        elif "http" in service:
+            url = f"http://{target}" if port == "80" else f"http://{target}:{port}"
+            web_targets.append(url)
+
+    if web_targets:
+        for url in web_targets:
             run_dirbuster(url, args.verbose)
-            succeeded = True
-            break
-        except requests.exceptions.SSLError:
-            continue
-        except requests.exceptions.RequestException:
-            continue
-
-    if not succeeded and to_probe:
-        run_dirbuster(f"{to_probe[0]}://{target}", args.verbose)
+    else:
+        print("\n[*] No HTTP/HTTPS services detected.")
 
 
 if __name__ == "__main__":

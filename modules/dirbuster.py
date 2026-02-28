@@ -84,7 +84,7 @@ def run_dirbuster(target, show_output=False):
                 "-o", output_file,
                 "-f",
                 "--depth", "1",
-                "-t", "10"
+                "-t", "50"
             ],
             check=True,
             stdout=stdout_opt,

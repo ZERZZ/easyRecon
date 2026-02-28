@@ -4,6 +4,10 @@ import socket
 import re
 import sys
 import random
+import urllib3
+
+# suppress SSL warnings for direct IP HTTPS probing
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def run_subdomain_enum(domain, scan_target, ports, show_output=False):
@@ -23,12 +27,12 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False):
     use_https = any(p.get('port') == '443' for p in (ports or []))
     scheme = 'https' if use_https else 'http'
 
-    baseline_words = get_baseline_wordcount(domain, ip_target, scheme)
-    if baseline_words is None:
-        print("[!] Could not determine baseline word count. Skipping subdomain enumeration.")
+    baseline_size = get_baseline_content_length(domain, ip_target, scheme)
+    if baseline_size is None:
+        print("[!] Could not determine baseline content length. Skipping subdomain enumeration.")
         return []
 
-    print(f"[*] Baseline word count: {baseline_words}")
+    print(f"[*] Baseline content length: {baseline_size}")
 
     target_host = ip_target if ip_target else scan_target
     target_url = f"{scheme}://{target_host}/"
@@ -38,8 +42,7 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False):
         "-w", "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
         "-u", target_url,
         "-H", f"Host: FUZZ.{domain}",
-        "-fw", str(baseline_words),
-        "-v",
+        "-fs", str(baseline_size),
         "-t", "25"
     ]
 
@@ -47,12 +50,12 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False):
         ffuf_cmd.append("-k")
 
     try:
-        result = subprocess.run(ffuf_cmd, capture_output=True, text=True, timeout=300)
-        if show_output:
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                print(result.stderr, file=sys.stderr)
+        result = subprocess.run(
+            ffuf_cmd,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
     except subprocess.TimeoutExpired:
         print("[!] ffuf scan timed out.")
         return []
@@ -72,8 +75,8 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False):
     return subdomains
 
 
-def get_baseline_wordcount(domain, ip_target, scheme='http'):
-    """Get word count for a non-existent subdomain to filter noise."""
+def get_baseline_content_length(domain, ip_target, scheme='http'):
+    """Get Content-Length for a non-existent subdomain to filter catch-all noise."""
     fake_host = f"nonexistent-{random.randint(1, 10000000)}.{domain}"
 
     if ip_target:
@@ -88,33 +91,39 @@ def get_baseline_wordcount(domain, ip_target, scheme='http'):
             return None
 
     try:
-        resp = requests.get(url, headers=headers, timeout=5, allow_redirects=False, verify=False)
-        return len(resp.text.split())
+        resp = requests.get(
+            url,
+            headers=headers,
+            timeout=5,
+            allow_redirects=False,
+            verify=False
+        )
+
+        # Prefer header if present
+        if 'Content-Length' in resp.headers:
+            return int(resp.headers['Content-Length'])
+
+        # Fallback to actual body length
+        return len(resp.content)
+
     except requests.exceptions.RequestException:
         return None
 
 
 def parse_ffuf_output(output, domain):
-    """Extract discovered subdomains from ffuf verbose output."""
+    """Extract discovered subdomains from ffuf output."""
     subdomains = []
 
     for line in output.split('\n'):
         line = line.strip()
-        
-        if 'FUZZ.' in line and domain in line:
-            m = re.search(r'FUZZ\.([^\s/]+\.' + re.escape(domain) + r')', line)
-            if m:
-                candidate = m.group(1)
-                if candidate.endswith('.' + domain) and candidate not in subdomains:
-                    subdomains.append(candidate)
-        
-        if 'http://' in line or 'https://' in line:
-            try:
-                url = line.split()[-1]
-                host = re.sub(r'^https?://', '', url).split('/')[0]
-                if host.endswith('.' + domain) and host not in subdomains:
-                    subdomains.append(host)
-            except (IndexError, ValueError):
-                pass
+
+        if not line:
+            continue
+
+        # ffuf standard output line parsing
+        parts = line.split()
+        for part in parts:
+            if part.endswith('.' + domain) and part not in subdomains:
+                subdomains.append(part)
 
     return subdomains

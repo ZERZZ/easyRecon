@@ -1,6 +1,10 @@
 import subprocess
 import xml.etree.ElementTree as ET
 import re
+import requests
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def run_portscan(target, show_output=False):
     print(f"[*] Running nmap against {target}...")
@@ -10,20 +14,84 @@ def run_portscan(target, show_output=False):
         stderr_opt = None if show_output else subprocess.DEVNULL
 
         subprocess.run(
-            ["nmap", "-sS", "-sV", "-sC", "--noninteractive", "-oX", "scan.xml", "--top-ports", "1000", target],
+            ["nmap", "-sS", "-sV", "-sC", "-T4", "--noninteractive", "-oX", "scan.xml", "--top-ports", "1000", target],
             check=True,
             stdout=stdout_opt,
             stderr=stderr_opt
         )
 
         print("[*] Nmap scan completed.")
-        return parse_nmap_xml("scan.xml")
+        return parse_nmap_xml("scan.xml", target)
 
     except subprocess.CalledProcessError:
         print("[!] Nmap scan failed.")
         return {"ports": [], "hostname": None}
 
-def parse_nmap_xml(xml_file):
+def is_valid_hostname(hostname, target):
+    if not hostname:
+        return False
+
+    hostname = hostname.strip().lower()
+
+    invalid_exact = [
+        "localhost",
+        "localhost.localdomain",
+        "localhost.local",
+        "example.com",
+        "test",
+        target.lower()
+    ]
+
+    if hostname in invalid_exact:
+        return False
+
+    if hostname.startswith("ip-"):
+        return False
+
+    if hostname.endswith(".local") or hostname.endswith(".localdomain"):
+        return False
+
+    return True
+
+def extract_hostname_from_headers(target, open_ports):
+    candidate = None
+
+    http_ports = [p["port"] for p in open_ports if p["port"] in ["80", "443"]]
+
+    for port in http_ports:
+        scheme = "https" if port == "443" else "http"
+        url = f"{scheme}://{target}"
+
+        try:
+            resp = requests.get(url, timeout=3, verify=False)
+            headers = resp.headers
+
+            header_keys = [
+                "X-Backend-Server",
+                "X-Backend",
+                "X-Served-By",
+                "X-Host",
+                "X-Forwarded-Host",
+                "X-Forwarded-Server",
+                "Server",
+                "Via"
+            ]
+
+            for key in header_keys:
+                value = headers.get(key)
+                if value:
+                    # attempt to extract hostname-like pattern
+                    match = re.search(r'([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', value)
+                    if match:
+                        candidate = match.group(1)
+                        return candidate
+
+        except requests.RequestException:
+            continue
+
+    return candidate
+
+def parse_nmap_xml(xml_file, target):
     tree = ET.parse(xml_file)
     root = tree.getroot()
     open_ports = []
@@ -74,5 +142,14 @@ def parse_nmap_xml(xml_file):
                     "service": service_name
                 })
 
-    return {"ports": open_ports, "hostname": hostname}
+    # Validate SSL hostname
+    if not is_valid_hostname(hostname, target):
+        hostname = None
 
+    # If no valid hostname from SSL, try HTTP headers
+    if not hostname:
+        header_hostname = extract_hostname_from_headers(target, open_ports)
+        if is_valid_hostname(header_hostname, target):
+            hostname = header_hostname
+
+    return {"ports": open_ports, "hostname": hostname}
