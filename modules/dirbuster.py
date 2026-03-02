@@ -6,7 +6,6 @@ from datetime import datetime
 
 
 def _parse_json_results(results):
-    """Extract hits from feroxbuster JSON output."""
     hits = []
     for result in results:
         hits.append({
@@ -19,7 +18,6 @@ def _parse_json_results(results):
 
 
 def _parse_text_results(content):
-    """Fall back to parsing feroxbuster text output."""
     hits = []
     line_re = re.compile(r"^\s*(\d{3})\s+\S+\s+(\d+l)\s+(\d+w)\s+\S+\s+(https?://\S+)", re.IGNORECASE)
     
@@ -37,7 +35,6 @@ def _parse_text_results(content):
                 'words': match.group(3)
             })
         else:
-            # Naive fallback
             parts = line.split()
             if len(parts) >= 2:
                 try:
@@ -53,8 +50,10 @@ def _parse_text_results(content):
     return hits
 
 
-def run_dirbuster(target, show_output=False):
-    print(f"[*] Running feroxbuster against {target}...")
+def run_dirbuster(target, hostname=None, show_output=False):
+    scan_target = target.rstrip("/")
+
+    print(f"[*] Running feroxbuster against {scan_target}...")      
     
     timestamp = datetime.now().strftime("%s")
     output_file = f"/tmp/ferox_{timestamp}.json"
@@ -76,16 +75,22 @@ def run_dirbuster(target, show_output=False):
         stdout_opt = None if show_output else subprocess.DEVNULL
         stderr_opt = None if show_output else subprocess.DEVNULL
 
+        command = [
+            "feroxbuster",
+            "-w", "/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt",
+            "-u", scan_target,
+            "-o", output_file,
+            "-f",
+            "--depth", "1",
+            "-t", "50"
+        ]
+
+        # add host header if hostname exists
+        if hostname:
+            command.extend(["-H", f"Host: {hostname}"])
+
         subprocess.run(
-            [
-                "feroxbuster",
-                "-w", "/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt",
-                "-u", target,
-                "-o", output_file,
-                "-f",
-                "--depth", "1",
-                "-t", "50"
-            ],
+            command,
             check=True,
             stdout=stdout_opt,
             stderr=stderr_opt

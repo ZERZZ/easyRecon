@@ -80,7 +80,6 @@ def extract_hostname_from_headers(target, open_ports):
             for key in header_keys:
                 value = headers.get(key)
                 if value:
-                    # attempt to extract hostname-like pattern
                     match = re.search(r'([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', value)
                     if match:
                         candidate = match.group(1)
@@ -97,30 +96,41 @@ def parse_nmap_xml(xml_file, target):
     open_ports = []
     hostname = None
 
+    # attempt to get hostname from http-title redirect (should always be first)
+    for script in root.findall(".//script[@id='http-title']"):
+        output = script.get("output", "")
+        match = re.search(r'http://([a-zA-Z0-9.-]+)', output)
+        if match:
+            redirect_host = match.group(1)
+            if is_valid_hostname(redirect_host, target):
+                hostname = redirect_host
+                break
+
     # attempt to get hostname from SSL certificate
-    for host in root.findall("host"):
-        ports = host.find("ports")
-        if ports is not None:
-            for port in ports.findall("port"):
-                script = port.find("script[@id='ssl-cert']")
-                if script is not None:
-                    output = script.get("output", "")
+    if not hostname:
+        for host in root.findall("host"):
+            ports = host.find("ports")
+            if ports is not None:
+                for port in ports.findall("port"):
+                    script = port.find("script[@id='ssl-cert']")
+                    if script is not None:
+                        output = script.get("output", "")
+                        match = re.search(r'commonName=([^/,\n]+)', output)
+                        if match:
+                            hostname = match.group(1)
+                            break
+            
+            if hostname:
+                break
+
+            # Fallback to check other script outputs 
+            for script in host.findall(".//script"):
+                output = script.get("output", "")
+                if "commonName=" in output:
                     match = re.search(r'commonName=([^/,\n]+)', output)
                     if match:
                         hostname = match.group(1)
                         break
-        
-        if hostname:
-            break
-
-        # Fallback- check other script outputs
-        for script in host.findall(".//script"):
-            output = script.get("output", "")
-            if "commonName=" in output:
-                match = re.search(r'commonName=([^/,\n]+)', output)
-                if match:
-                    hostname = match.group(1)
-                    break
 
     # Parse open ports
     for host in root.findall("host"):
@@ -146,7 +156,7 @@ def parse_nmap_xml(xml_file, target):
     if not is_valid_hostname(hostname, target):
         hostname = None
 
-    # If no valid hostname from SSL, try HTTP headers
+    # If no valid hostname from SSL/redirect, try HTTP headers
     if not hostname:
         header_hostname = extract_hostname_from_headers(target, open_ports)
         if is_valid_hostname(header_hostname, target):

@@ -2,6 +2,8 @@ from modules.portscan import run_portscan
 from modules.dirbuster import run_dirbuster
 from modules.subdomain_enum import run_subdomain_enum
 from modules.technology_stack import run_tech_stack
+from modules.smbenum import run_smbenum
+from modules.ldapenum import run_ldapenum
 import re
 import argparse
 import requests
@@ -26,7 +28,7 @@ def main():
     )
     parser.add_argument(
         '-o', '--only',
-        choices=['all', 'portscan', 'dirbuster', 'subdomain', 'techstack'],
+        choices=['all', 'portscan', 'dirbuster', 'subdomain', 'techstack', 'smbenum', 'ldapenum'],
         default='all',
         help='Run only a specific module'
     )
@@ -75,6 +77,30 @@ def main():
         run_tech_stack(target, hostname, ports)
         return
 
+    if only == 'smbenum':
+        scan_results = run_portscan(target, args.verbose)
+        ports = scan_results["ports"]
+
+        smb_open = any(p.get("port") == "445" for p in ports)
+
+        if smb_open:
+            run_smbenum(target, args.verbose)
+        else:
+            print("\n[*] Port 445 not detected. SMB not available.")
+        return
+
+    if only == 'ldapenum':
+        scan_results = run_portscan(target, args.verbose)
+        ports = scan_results["ports"]
+
+        ldap_open = any(p.get("port") == "389" for p in ports)
+
+        if ldap_open:
+            run_ldapenum(target, args.verbose)
+        else:
+            print("\n[*] Port 389 not detected. LDAP not available.")
+        return
+
     scan_results = run_portscan(target, args.verbose)
     ports = scan_results["ports"]
     hostname = scan_results["hostname"]
@@ -83,6 +109,21 @@ def main():
     for p in ports:
         print(f" - {p['port']}/{p['protocol']} ({p['service']})")
 
+    # SMB detection
+    smb_open = any(p.get("port") == "445" for p in ports)
+    if smb_open:
+        print("\n[*] SMB detected on port 445.")
+        run_smbenum(target, args.verbose)
+    else:
+        print("\n[*] No SMB service detected.")
+
+    # LDAP detection
+    ldap_open = any(p.get("port") == "389" for p in ports)
+    if ldap_open:
+        print("\n[*] LDAP detected on port 389.")
+        run_ldapenum(target, args.verbose)
+    else:
+        print("\n[*] No LDAP service detected.")
 
     # technology stack detection
     run_tech_stack(target, hostname, ports)
@@ -92,7 +133,6 @@ def main():
         run_subdomain_enum(hostname, target, ports, args.verbose)
     else:
         print("\n[*] No hostname found in SSL certificate.")
-
 
     # run dirbuster 
     web_targets = []
@@ -114,7 +154,7 @@ def main():
 
     if web_targets:
         for url in web_targets:
-            run_dirbuster(url, args.verbose)
+            run_dirbuster(url, hostname, args.verbose)
     else:
         print("\n[*] No HTTP/HTTPS services detected.")
 

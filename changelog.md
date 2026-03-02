@@ -1,4 +1,10 @@
-# Changelog
+# EasyRecon Changelog
+
+## v1.2
+- Amended portscan.py's host discovery parsing to include http_title. 
+- Fixed dirbusting module not including -H argument if host found. 
+- Added smbenum.py module running crackmapexec and attempting anon/null.
+- Added ldapenum.py module; attempts null connection, enumerates AD users. 
 
 ## v1.1
 - Switched subdomain filtering from word-count to content-length.
