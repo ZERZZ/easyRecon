@@ -25,6 +25,7 @@ Active Directory Enumeration
 
 ```bash
 python3 main.py <target> [-o all|portscan|dirbuster|subdomain|techstack|subenum|ldapenum] [-v]
+```
 
 ---
 
@@ -32,3 +33,4 @@ python3 main.py <target> [-o all|portscan|dirbuster|subdomain|techstack|subenum|
 
 ```bash
 python3 main.py 10.10.10.10 -o subenum -v
+```
