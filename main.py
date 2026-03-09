@@ -4,6 +4,8 @@ from modules.subdomain_enum import run_subdomain_enum
 from modules.technology_stack import run_tech_stack
 from modules.smbenum import run_smbenum
 from modules.ldapenum import run_ldapenum
+from modules.rpcenum import run_rpcenum 
+from modules.ftpenum import run_ftpenum
 import re
 import argparse
 import requests
@@ -19,8 +21,8 @@ def sanitize_target(target):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='EasyRecon - Web reconnaissance tool',
-        usage='python main.py <target>'
+        description='EasyRecon - Reconnaissance & Enumeration Tool',
+        usage='python main.py <target> [options]'
     )
     parser.add_argument(
         'target',
@@ -28,7 +30,7 @@ def main():
     )
     parser.add_argument(
         '-o', '--only',
-        choices=['all', 'portscan', 'dirbuster', 'subdomain', 'techstack', 'smbenum', 'ldapenum'],
+        choices=['all', 'portscan', 'dirbuster', 'subdomain', 'techstack', 'smbenum', 'ldapenum', 'rpcenum', 'ftpenum'],
         default='all',
         help='Run only a specific module'
     )
@@ -51,20 +53,40 @@ def main():
     ╚══════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝
 
                                 Author: mattsec
-                    Web Reconnaissance & Enumeration Tool
+                        Reconnaissance & Enumeration Tool
     """
 
     print(banner)
     print(f"[*] Target: {target}\n")
 
+    ## This logic feels repetitive and needs a revamp - maybe a dict of module names to functions ?
+
     if only == 'portscan':
         scan_results = run_portscan(target, args.verbose)
         ports = scan_results["ports"]
+        ftp_anonymous = scan_results.get("ftp_anonymous")
 
         print("\n[+] Open ports found:")
         for p in ports:
             print(f" - {p['port']}/{p['protocol']} ({p['service']})")
+
+        if ftp_anonymous:
+            print("\n[+] Anonymous FTP login allowed:")
+            print(ftp_anonymous)
+
         return
+    
+    if only == 'ftpenum':
+        scan_results = run_portscan(target, args.verbose)
+        ports = scan_results["ports"]
+
+        ftp_open = any(p.get("port") == "21" for p in ports)
+
+        if ftp_open:
+            run_ftpenum(target, args.verbose)
+        else:
+            print("\n[*] Port 21 not detected. FTP not available.")
+        return   
 
     if only == 'subdomain':
         run_subdomain_enum(target, target, None, args.verbose)
@@ -101,13 +123,38 @@ def main():
             print("\n[*] Port 389 not detected. LDAP not available.")
         return
 
+    if only == 'rpcenum':
+        scan_results = run_portscan(target, args.verbose)
+        ports = scan_results["ports"]
+
+        rpc_open = any(p.get("port") == "135" for p in ports)
+
+        if rpc_open:
+            run_rpcenum(target, args.verbose)
+        else:
+            print("\n[*] Port 135 not detected. RPC not available.")
+        return
+
     scan_results = run_portscan(target, args.verbose)
     ports = scan_results["ports"]
     hostname = scan_results["hostname"]
+    ftp_anonymous = scan_results.get("ftp_anonymous")
 
     print("\n[+] Open ports found:")
     for p in ports:
         print(f" - {p['port']}/{p['protocol']} ({p['service']})")
+
+    if ftp_anonymous:
+        print("\n[+] Anonymous FTP login allowed:")
+        print(ftp_anonymous)
+
+    ## ftp detection
+    ftp_open = any(p.get("port") == "21" for p in ports)
+    if ftp_open:
+        print("\n[*] FTP detected on port 21.")
+        run_ftpenum(target, args.verbose)
+    else:
+        print("\n[*] No FTP service detected.")
 
     # SMB detection
     smb_open = any(p.get("port") == "445" for p in ports)
@@ -124,6 +171,14 @@ def main():
         run_ldapenum(target, args.verbose)
     else:
         print("\n[*] No LDAP service detected.")
+
+    # RPC detection
+    rpc_open = any(p.get("port") == "135" for p in ports)
+    if rpc_open:
+        print("\n[*] RPC detected on port 135.")
+        run_rpcenum(target, args.verbose)
+    else:
+        print("\n[*] No RPC service detected.")
 
     # technology stack detection
     run_tech_stack(target, hostname, ports)

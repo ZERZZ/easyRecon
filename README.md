@@ -1,13 +1,13 @@
 # EasyRecon
 
 **EasyRecon** is a reconnaissance & enumeration tool for security testing.  
-It automates common recon steps across web services and AD environments.
+It automates common recon steps across web services and AD environments.  
 
 ---
 
 ## Features
 
-Web Enumeration
+### Web Enumeration
 - TCP port scanning with service detection  
 - SSL certificate hostname extraction  
 - Technology stack detection (Apache, Nginx, PHP, WordPress, etc.)  
@@ -15,16 +15,18 @@ Web Enumeration
 - Subdomain enumeration using host header wordlists  
 - Directory brute-forcing for detected web services  
 
-Active Directory Enumeration
-- SMB anonymous bind attempt and mapping.
-- LDAP anonymous bind attempt and AD users enumeration.
+### Active Directory Enumeration
+- SMB anonymous bind attempt and mapping  
+- LDAP anonymous bind attempt and AD users enumeration  
+- RPC anonymous connection attempt and enumdomusers enumeration  
+- FTP anonymous connection attempt and interesting file parsing  
 
 ---
 
 ## Usage
 
 ```bash
-python3 main.py <target> [-o all|portscan|dirbuster|subdomain|techstack|subenum|ldapenum] [-v]
+python3 main.py <target> [-o all|portscan|dirbuster|subdomain|techstack|smbenum|ldapenum|rpcenum|ftpenum] [-v]
 ```
 
 ---
@@ -32,5 +34,5 @@ python3 main.py <target> [-o all|portscan|dirbuster|subdomain|techstack|subenum|
 ## Example
 
 ```bash
-python3 main.py 10.10.10.10 -o subenum -v
+python3 main.py 10.10.10.10 -o smbenum -v
 ```

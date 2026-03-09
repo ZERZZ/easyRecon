@@ -95,6 +95,7 @@ def parse_nmap_xml(xml_file, target):
     root = tree.getroot()
     open_ports = []
     hostname = None
+    ftp_anonymous = None
 
     # attempt to get hostname from http-title redirect (should always be first)
     for script in root.findall(".//script[@id='http-title']"):
@@ -152,6 +153,12 @@ def parse_nmap_xml(xml_file, target):
                     "service": service_name
                 })
 
+                ftp_anon_script = port.find("script[@id='ftp-anon']")
+                if ftp_anon_script is not None:
+                    ftp_output = ftp_anon_script.get("output", "")
+                    if "Anonymous FTP login allowed" in ftp_output:
+                        ftp_anonymous = ftp_output.strip()
+
     # Validate SSL hostname
     if not is_valid_hostname(hostname, target):
         hostname = None
@@ -162,4 +169,4 @@ def parse_nmap_xml(xml_file, target):
         if is_valid_hostname(header_hostname, target):
             hostname = header_hostname
 
-    return {"ports": open_ports, "hostname": hostname}
+    return {"ports": open_ports, "hostname": hostname, "ftp_anonymous": ftp_anonymous}
