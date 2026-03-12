@@ -1,0 +1,3 @@
+gitdump:
+  # The directory where the git repositories will be dumped
+  dump_directory: /home/matt/thmlabs/enum/

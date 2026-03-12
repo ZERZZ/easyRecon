@@ -25,7 +25,8 @@ def run_portscan(target, show_output=False):
 
     except subprocess.CalledProcessError:
         print("[!] Nmap scan failed.")
-        return {"ports": [], "hostname": None}
+        return {"ports": [], "hostname": None, "web_targets": []}
+
 
 def is_valid_hostname(hostname, target):
     if not hostname:
@@ -52,6 +53,7 @@ def is_valid_hostname(hostname, target):
         return False
 
     return True
+
 
 def extract_hostname_from_headers(target, open_ports):
     candidate = None
@@ -90,12 +92,16 @@ def extract_hostname_from_headers(target, open_ports):
 
     return candidate
 
+
 def parse_nmap_xml(xml_file, target):
     tree = ET.parse(xml_file)
     root = tree.getroot()
+
     open_ports = []
     hostname = None
     ftp_anonymous = None
+    git_repo = None
+    web_targets = []
 
     # attempt to get hostname from http-title redirect (should always be first)
     for script in root.findall(".//script[@id='http-title']"):
@@ -120,11 +126,11 @@ def parse_nmap_xml(xml_file, target):
                         if match:
                             hostname = match.group(1)
                             break
-            
+
             if hostname:
                 break
 
-            # Fallback to check other script outputs 
+            # Fallback to check other script outputs
             for script in host.findall(".//script"):
                 output = script.get("output", "")
                 if "commonName=" in output:
@@ -141,7 +147,9 @@ def parse_nmap_xml(xml_file, target):
 
         for port in ports.findall("port"):
             state = port.find("state")
+
             if state is not None and state.get("state") == "open":
+
                 port_id = port.get("portid")
                 protocol = port.get("protocol")
                 service = port.find("service")
@@ -153,11 +161,29 @@ def parse_nmap_xml(xml_file, target):
                     "service": service_name
                 })
 
+                # Detect web services
+                if service_name in ["http", "https"]:
+                    scheme = "https" if service_name == "https" or port_id == "443" else "http"
+
+                    if port_id == "80":
+                        web_targets.append(f"http://{target}")
+                    elif port_id == "443":
+                        web_targets.append(f"https://{target}")
+                    else:
+                        web_targets.append(f"{scheme}://{target}:{port_id}")
+
                 ftp_anon_script = port.find("script[@id='ftp-anon']")
                 if ftp_anon_script is not None:
                     ftp_output = ftp_anon_script.get("output", "")
                     if "Anonymous FTP login allowed" in ftp_output:
                         ftp_anonymous = ftp_output.strip()
+
+    # Detect exposed git repositories via NSE
+    for script in root.findall(".//script[@id='http-git']"):
+        output = script.get("output", "")
+        if "Git repository found!" in output:
+            git_repo = output.strip()
+            break
 
     # Validate SSL hostname
     if not is_valid_hostname(hostname, target):
@@ -169,4 +195,10 @@ def parse_nmap_xml(xml_file, target):
         if is_valid_hostname(header_hostname, target):
             hostname = header_hostname
 
-    return {"ports": open_ports, "hostname": hostname, "ftp_anonymous": ftp_anonymous}
+    return {
+        "ports": open_ports,
+        "hostname": hostname,
+        "ftp_anonymous": ftp_anonymous,
+        "git_repo": git_repo,
+        "web_targets": web_targets
+    }

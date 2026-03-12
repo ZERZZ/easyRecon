@@ -2,6 +2,10 @@ import subprocess
 import json
 import os
 import re
+import requests
+import random
+import string
+from difflib import SequenceMatcher
 from datetime import datetime
 
 
@@ -50,6 +54,37 @@ def _parse_text_results(content):
     return hits
 
 
+def _similarity(a, b):
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _detect_wildcard(target, hostname=None):
+    headers = {}
+    if hostname:
+        headers["Host"] = hostname
+
+    bodies = []
+    lengths = []
+
+    for _ in range(5):
+        rand = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
+        url = f"{target}/{rand}"
+
+        try:
+            r = requests.get(url, headers=headers, timeout=5, verify=False)
+            bodies.append(r.text)
+            lengths.append(len(r.text))
+        except requests.RequestException:
+            return None
+
+    avg_length = sum(lengths) // len(lengths)
+
+    return {
+        "length": avg_length,
+        "body": bodies[0]
+    }
+
+
 def run_dirbuster(target, hostname=None, show_output=False):
     scan_target = target.rstrip("/")
 
@@ -72,6 +107,8 @@ def run_dirbuster(target, hostname=None, show_output=False):
     }
 
     try:
+        wildcard = _detect_wildcard(scan_target, hostname)
+
         stdout_opt = None if show_output else subprocess.DEVNULL
         stderr_opt = None if show_output else subprocess.DEVNULL
 
@@ -85,7 +122,9 @@ def run_dirbuster(target, hostname=None, show_output=False):
             "-t", "50"
         ]
 
-        # add host header if hostname exists
+        if scan_target.startswith("https://"):
+            command.append("--insecure")
+
         if hostname:
             command.extend(["-H", f"Host: {hostname}"])
 
@@ -116,6 +155,23 @@ def run_dirbuster(target, hostname=None, show_output=False):
                 all_hits.append(hit)
                 status = hit['status']
                 url = hit['url']
+
+                if wildcard:
+                    try:
+                        headers = {}
+                        if hostname:
+                            headers["Host"] = hostname
+
+                        r = requests.get(url, headers=headers, timeout=5, verify=False)
+                        body = r.text
+                        length = len(body)
+
+                        if abs(length - wildcard["length"]) < 100:
+                            sim = _similarity(body, wildcard["body"])
+                            if sim > 0.90:
+                                continue
+                    except requests.RequestException:
+                        continue
                 
                 if status not in valuable_statuses:
                     continue

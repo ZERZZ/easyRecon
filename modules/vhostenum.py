@@ -1,5 +1,8 @@
 import subprocess
 import requests
+import socket
+import re
+import sys
 import random
 import urllib3
 import json
@@ -8,30 +11,44 @@ import json
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-def run_subdomain_enum(domain, scan_target, ports, show_output=False):
-    """Run DNS subdomain enumeration against the target domain."""
-    print(f"[*] Running subdomain enumeration for {domain}...")
+def run_vhost_enum(domain, scan_target, ports, show_output=False):
+    """Run vhost enumeration against the target IP using Host headers."""
 
-    # extract scheme from scan_target provided by main.py
+    # extract scheme / host from main
     scheme = scan_target.split("://")[0]
+    host = scan_target.split("://")[1].split("/")[0]
 
-    baseline_size = get_baseline_content_length(domain, scheme)
+    # Get IP to send requests to
+    ip_target = None
+    if re.match(r'^\d+\.\d+\.\d+\.\d+$', host):
+        ip_target = host
+    else:
+        try:
+            ip_target = socket.gethostbyname(host)
+        except socket.gaierror:
+            ip_target = None
+
+    target_host = domain if domain else host
+    target_url = f"{scheme}://{target_host}/"
+
+    baseline_size = get_baseline_content_length(domain, target_url)
     if baseline_size is None:
-        print("[!] Could not determine baseline content length. Skipping subdomain enumeration.")
+        print("[!] Could not determine baseline content length. Skipping vhost enumeration.")
         return []
 
     print(f"[*] Baseline content length: {baseline_size}")
+    print(f"[*] Running vhost enumeration for {domain} against {target_url}...")
 
     ffuf_cmd = [
         "ffuf",
         "-w", "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
-        "-u", f"{scheme}://FUZZ.{domain}",
+        "-u", target_url,
+        "-H", f"Host: FUZZ.{domain}",
         "-fs", str(baseline_size),
         "-t", "25",
         "-of", "json"
     ]
 
-    # if HTTPS target disable verification
     if scheme == "https":
         ffuf_cmd.append("-k")
 
@@ -52,36 +69,35 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False):
     if show_output:
         print(result.stdout)
 
-    subdomains = parse_ffuf_output(result.stdout, domain)
+    vhosts = parse_ffuf_output(result.stdout, domain)
 
-    if subdomains:
-        print(f"[+] Found {len(subdomains)} subdomains:")
-        for subdomain in subdomains:
-            print(f"    - {subdomain}")
+    if vhosts:
+        print(f"[+] Found {len(vhosts)} vhosts:")
+        for vhost in vhosts:
+            print(f"    - {vhost}")
     else:
-        print("[*] No subdomains found.")
+        print("[*] No vhosts found.")
 
-    return subdomains
+    return vhosts
 
 
-def get_baseline_content_length(domain, scheme='http'):
-    """Get Content-Length for a random subdomain to detect wildcard responses."""
-    fake_sub = f"nonexistent-{random.randint(1, 10000000)}"
-    url = f"{scheme}://{fake_sub}.{domain}"
+def get_baseline_content_length(domain, target_url):
+    """Get Content-Length for a non-existent vhost to filter catch-all noise."""
+
+    fake_host = f"nonexistent-{random.randint(1, 10000000)}.{domain}"
 
     try:
         resp = requests.get(
-            url,
+            target_url,
+            headers={"Host": fake_host},
             timeout=5,
             allow_redirects=False,
             verify=False
         )
 
-        # Prefer header if present
         if 'Content-Length' in resp.headers:
             return int(resp.headers['Content-Length'])
 
-        # Fallback to actual body length
         return len(resp.content)
 
     except requests.exceptions.RequestException:
@@ -89,33 +105,30 @@ def get_baseline_content_length(domain, scheme='http'):
 
 
 def parse_ffuf_output(output, domain):
-    """Extract discovered subdomains from ffuf output."""
-    subdomains = []
+    """Extract discovered vhosts from ffuf output."""
+    vhosts = []
 
-    # try JSON parsing first (more reliable)
     try:
         data = json.loads(output)
         for entry in data.get("results", []):
             fuzz_value = entry.get("input", {}).get("FUZZ")
             if fuzz_value:
-                subdomain = f"{fuzz_value}.{domain}"
-                if subdomain not in subdomains:
-                    subdomains.append(subdomain)
-        return subdomains
+                vhost = f"{fuzz_value}.{domain}"
+                if vhost not in vhosts:
+                    vhosts.append(vhost)
+        return vhosts
     except json.JSONDecodeError:
         pass
 
-    # fallback
     for line in output.split('\n'):
         line = line.strip()
 
         if not line:
             continue
 
-        # ffuf standard output line parsing
         parts = line.split()
         for part in parts:
-            if part.endswith('.' + domain) and part not in subdomains:
-                subdomains.append(part)
+            if part.endswith('.' + domain) and part not in vhosts:
+                vhosts.append(part)
 
-    return subdomains
+    return vhosts
