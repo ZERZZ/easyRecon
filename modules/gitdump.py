@@ -3,6 +3,8 @@ import subprocess
 import yaml
 import re
 
+from utils.output import print
+
 INTERESTING_FILES = [
     ".env",
     ".env.production",

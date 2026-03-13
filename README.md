@@ -45,7 +45,7 @@ git-dumper
 - /.git endpoint dumping and parsing of interesting data 
 
 ### Active Directory Enumeration
-- SMB anonymous bind attempt and mapping  
+- SMB anonymous bind attempt, mapping & RID cycling with user extraction.   
 - LDAP anonymous bind attempt and AD users enumeration  
 - RPC anonymous connection attempt and enumdomusers enumeration  
 - FTP anonymous connection attempt and interesting file parsing  

@@ -2,10 +2,11 @@ import subprocess
 import requests
 import socket
 import re
-import sys
 import random
 import urllib3
 import json
+
+from utils.output import print
 
 # suppress SSL warnings for direct IP HTTPS probing
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -13,6 +14,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def run_vhost_enum(domain, scan_target, ports, show_output=False):
     """Run vhost enumeration against the target IP using Host headers."""
+
+    # strip prepended subdomain if present 
+    parts = domain.split(".")
+    if len(parts) > 2:
+        domain = ".".join(parts[1:])
 
     # extract scheme / host from main
     scheme = scan_target.split("://")[0]

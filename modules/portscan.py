@@ -4,6 +4,8 @@ import re
 import requests
 import urllib3
 
+from utils.output import print
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def run_portscan(target, show_output=False):
@@ -103,6 +105,9 @@ def parse_nmap_xml(xml_file, target):
     git_repo = None
     web_targets = []
 
+    # ports that are commonly web services
+    web_ports = {"80", "443", "8080", "8000", "8008","8081", "8443", "8888", "3000", "5000", "7001"}
+
     # attempt to get hostname from http-title redirect (should always be first)
     for script in root.findall(".//script[@id='http-title']"):
         output = script.get("output", "")
@@ -161,8 +166,8 @@ def parse_nmap_xml(xml_file, target):
                     "service": service_name
                 })
 
-                # Detect web services
-                if service_name in ["http", "https"]:
+                # Detect web services (restricted to common web ports to avoid false positives)
+                if service_name in ["http", "https"] and port_id in web_ports:
                     scheme = "https" if service_name == "https" or port_id == "443" else "http"
 
                     if port_id == "80":

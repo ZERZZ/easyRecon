@@ -1,5 +1,16 @@
 # EasyRecon Changelog
 
+### v1.5 - Mar 13, 2026
+- Added RID cycling and username extraction to smbenum.py.
+- Added nullbind attempt to smbenum.py if crackmapexec fails.
+- Added stripping for hosts with 2+ labels for subdomain/vhost fuzzing.
+- Fixed an issue with rpcenum.py incorrectly identifying enumdomusers success. 
+- Fixed an issue with portscan.py incorrectly identifying web targets.
+- Fixed an issue with the tool failing when no web targets were identified. 
+- Fixed web modules forcing bad host from SSL cert.  
+- Revamped terminal output format for readability/efficiency (utils/output.py).
+- Moved banner outside of main to utils/banner.py.
+
 ### v1.4 - Mar 12, 2026
 - Added gitdump.py module which dumps git locally based on http-git NSE script.
 - Introduced settings.yaml for configurable tool settings.

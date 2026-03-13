@@ -8,6 +8,10 @@ from modules.rpcenum import run_rpcenum
 from modules.ftpenum import run_ftpenum
 from modules.gitdump import run_gitdump
 from modules.subdomain_enum import run_subdomain_enum
+
+from utils.output import section, banner as print_banner, print
+from utils.banner import main_banner
+
 import re
 import argparse
 
@@ -52,20 +56,10 @@ def main():
     target = sanitize_target(args.target)
     only = args.only
 
-    banner = """
-    ███████╗ █████╗ ███████╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ ███╗   ██╗
-    ██╔════╝██╔══██╗██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔════╝██╔═══██╗████╗  ██║
-    █████╗  ███████║███████╗ ╚████╔╝ ██████╔╝█████╗  ██║     ██║   ██║██╔██╗ ██║
-    ██╔══╝  ██╔══██║╚════██║  ╚██╔╝  ██╔══██╗██╔══╝  ██║     ██║   ██║██║╚██╗██║
-    ███████╗██║  ██║███████║   ██║   ██║  ██║███████╗╚██████╗╚██████╔╝██║ ╚████║
-    ╚══════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝
+    ## main banner
+    main_banner()
 
-                                Author: mattsec
-                        Reconnaissance & Enumeration Tool
-    """
-
-    print(banner)
-    print(f"[*] Target: {target}\n")
+    print_banner(target)
 
     scan_results = run_portscan(target, args.verbose)
 
@@ -80,41 +74,45 @@ def main():
 
         "ftpenum": lambda: run_ftpenum(target, args.verbose)
         if any(p.get("port") == "21" for p in ports)
-        else print("\n[*] Port 21 not detected. FTP not available."),
+        else print("[*] Port 21 not detected. FTP not available."),
 
-        "vhostenum": lambda: run_vhost_enum(hostname, web_targets[0] if web_targets else None, ports, args.verbose),
+        "vhostenum": lambda: run_vhost_enum(hostname, web_targets[0], ports, args.verbose)
+        if web_targets else print("[*] No web service detected. Skipping vhost enumeration."),
 
-        "subdomains": lambda: run_subdomain_enum(hostname, web_targets[0] if web_targets else None, ports, args.verbose),
+        "subdomains": lambda: run_subdomain_enum(hostname, web_targets[0], ports, args.verbose)
+        if web_targets else print("[*] No web service detected. Skipping subdomain enumeration."),
 
-        "techstack": lambda: run_tech_stack(web_targets[0] if web_targets else None, hostname, ports),
+        "techstack": lambda: run_tech_stack(web_targets[0], hostname, ports)
+        if web_targets else print("[*] No web service detected. Skipping technology stack detection."),
 
         "smbenum": lambda: run_smbenum(target, args.verbose)
         if any(p.get("port") == "445" for p in ports)
-        else print("\n[*] Port 445 not detected. SMB not available."),
+        else print("[*] Port 445 not detected. SMB not available."),
 
         "ldapenum": lambda: run_ldapenum(target, args.verbose)
         if any(p.get("port") == "389" for p in ports)
-        else print("\n[*] Port 389 not detected. LDAP not available."),
+        else print("[*] Port 389 not detected. LDAP not available."),
 
         "rpcenum": lambda: run_rpcenum(target, args.verbose)
         if any(p.get("port") == "135" for p in ports)
-        else print("\n[*] Port 135 not detected. RPC not available."),
+        else print("[*] Port 135 not detected. RPC not available."),
 
         "dirbuster": lambda: [run_dirbuster(url, hostname, args.verbose) for url in web_targets]
     }
 
     if only != "all":
         if only == "portscan":
-            print("\n[+] Open ports found:")
+            section("Open Ports Found")
+
             for p in ports:
                 print(f" - {p['port']}/{p['protocol']} ({p['service']})")
 
             if ftp_anonymous:
-                print("\n[+] Anonymous FTP login allowed:")
+                section("Anonymous FTP Login Allowed")
                 print(ftp_anonymous)
 
             if git_repo:
-                print("\n[+] Exposed Git repository detected:")
+                section("Exposed Git Repository")
                 print(git_repo)
 
             return
@@ -122,58 +120,73 @@ def main():
         module_dispatch[only]()
         return
 
-    print("\n[+] Open ports found:")
+    section("Open Ports Found")
     for p in ports:
         print(f" - {p['port']}/{p['protocol']} ({p['service']})")
 
     if ftp_anonymous:
-        print("\n[+] Anonymous FTP login allowed:")
+        section("Anonymous FTP Login Allowed")
         print(ftp_anonymous)
 
     if git_repo:
-        print("\n[+] Exposed Git repository detected:")
+        section("Exposed Git Repository")
         print(git_repo)
 
+        section("Git Dump")
         git_path = git_repo.splitlines()[0].strip()
         run_gitdump(git_path)
 
     if any(p.get("port") == "21" for p in ports):
-        print("\n[*] FTP detected on port 21.")
+        section("FTP Enumeration")
+        print("[*] FTP detected on port 21.")
         run_ftpenum(target, args.verbose)
     else:
-        print("\n[*] No FTP service detected.")
+        print("[*] No FTP service detected.")
 
     if any(p.get("port") == "445" for p in ports):
-        print("\n[*] SMB detected on port 445.")
+        section("SMB Enumeration")
+        print("[*] SMB detected on port 445.")
         run_smbenum(target, args.verbose)
     else:
-        print("\n[*] No SMB service detected.")
+        print("[*] No SMB service detected.")
 
     if any(p.get("port") == "389" for p in ports):
-        print("\n[*] LDAP detected on port 389.")
+        section("LDAP Enumeration")
+        print("[*] LDAP detected on port 389.")
         run_ldapenum(target, args.verbose)
     else:
-        print("\n[*] No LDAP service detected.")
+        print("[*] No LDAP service detected.")
 
     if any(p.get("port") == "135" for p in ports):
-        print("\n[*] RPC detected on port 135.")
+        section("RPC Enumeration")
+        print("[*] RPC detected on port 135.")
         run_rpcenum(target, args.verbose)
     else:
-        print("\n[*] No RPC service detected.")
+        print("[*] No RPC service detected.")
 
     if web_targets:
+        section("Technology Stack Detection")
         run_tech_stack(web_targets[0], hostname, ports)
 
     if hostname:
-        print(f"\n[+] Hostname: {hostname}")
-        run_subdomain_enum(hostname, web_targets[0] if web_targets else None, ports, args.verbose)
-        run_vhost_enum(hostname, web_targets[0] if web_targets else None, ports, args.verbose)
+        section("Hostname")
+        print(f"[+] Hostname: {hostname}")
+
+        if web_targets:
+            section("Subdomain Enumeration")
+            run_subdomain_enum(hostname, web_targets[0], ports, args.verbose)
+
+            section("VHost Enumeration")
+            run_vhost_enum(hostname, web_targets[0], ports, args.verbose)
+        else:
+            print("[*] No web service detected. Skipping subdomain and vhost enumeration.")
 
     if web_targets:
+        section("Directory Enumeration")
         for url in web_targets:
             run_dirbuster(url, hostname, args.verbose)
     else:
-        print("\n[*] No HTTP/HTTPS services detected.")
+        print("[*] No HTTP/HTTPS services detected.")
 
 
 if __name__ == "__main__":

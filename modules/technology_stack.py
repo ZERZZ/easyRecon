@@ -2,6 +2,8 @@ import requests
 import re
 import urllib3
 
+from utils.output import print
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 

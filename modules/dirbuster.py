@@ -8,6 +8,8 @@ import string
 from difflib import SequenceMatcher
 from datetime import datetime
 
+from utils.output import print
+
 
 def _parse_json_results(results):
     hits = []
@@ -124,9 +126,6 @@ def run_dirbuster(target, hostname=None, show_output=False):
 
         if scan_target.startswith("https://"):
             command.append("--insecure")
-
-        if hostname:
-            command.extend(["-H", f"Host: {hostname}"])
 
         subprocess.run(
             command,

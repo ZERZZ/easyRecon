@@ -1,5 +1,7 @@
 from ftplib import FTP, error_perm
 
+from utils.output import print
+
 
 INTERESTING_EXTENSIONS = [
     ".zip",

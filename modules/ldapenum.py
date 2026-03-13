@@ -1,6 +1,8 @@
 import subprocess
 import re
 
+from utils.output import print
+
 
 def run_ldapenum(target, show_output=False):
     print(f"[*] Running LDAP enumeration against {target}...")

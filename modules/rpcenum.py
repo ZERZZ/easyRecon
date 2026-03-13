@@ -1,5 +1,7 @@
 import subprocess
 
+from utils.output import print
+
 
 def run_rpcenum(target, show_output=False):
     print(f"[*] Running RPC enumeration against {target}...")
@@ -62,7 +64,7 @@ def run_rpcenum(target, show_output=False):
                 text=True
             )
 
-            if enum_proc.stdout:
+            if enum_proc.stdout and "NT_STATUS_ACCESS_DENIED" not in enum_proc.stdout:
                 results["enumdomusers_output"] = enum_proc.stdout
                 print("[+] enumdomusers successful.")
             else:

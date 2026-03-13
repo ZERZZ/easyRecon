@@ -4,12 +4,20 @@ import random
 import urllib3
 import json
 
+from utils.output import print
+
 # suppress SSL warnings for direct IP HTTPS probing
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def run_subdomain_enum(domain, scan_target, ports, show_output=False):
     """Run DNS subdomain enumeration against the target domain."""
+    
+    # strip prepended subdomain if present 
+    parts = domain.split(".")
+    if len(parts) > 2:
+        domain = ".".join(parts[1:])
+
     print(f"[*] Running subdomain enumeration for {domain}...")
 
     # extract scheme from scan_target provided by main.py
