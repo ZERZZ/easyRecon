@@ -18,10 +18,10 @@ def _width():
 
 
 def _colorize_markers(text):
-    text = re.sub(r"\[\+\]", f"{Color.GREEN}[+]{Color.RESET}", text)
-    text = re.sub(r"\[\-\]", f"{Color.RED}[-]{Color.RESET}", text)
-    text = re.sub(r"\[\*\]", f"{Color.BLUE}[*]{Color.RESET}", text)
-    text = re.sub(r"\[\!\]", f"{Color.RED}[!]{Color.RESET}", text)
+    text = re.sub(r"\[\+\]", f"{Color.BOLD}{Color.GREEN}[+]{Color.RESET}", text)
+    text = re.sub(r"\[\-\]", f"{Color.BOLD}{Color.RED}[-]{Color.RESET}", text)
+    text = re.sub(r"\[\*\]", f"{Color.BOLD}{Color.BLUE}[*]{Color.RESET}", text)
+    text = re.sub(r"\[\!\]", f"{Color.BOLD}{Color.RED}[!]{Color.RESET}", text)
     return text
 
 

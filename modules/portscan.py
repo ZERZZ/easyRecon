@@ -42,7 +42,8 @@ def is_valid_hostname(hostname, target):
         "localhost.local",
         "example.com",
         "test",
-        target.lower()
+        target.lower(),
+        "ssl_self_signed_fallback"
     ]
 
     if hostname in invalid_exact:
@@ -101,6 +102,7 @@ def parse_nmap_xml(xml_file, target):
 
     open_ports = []
     hostname = None
+    domain = None
     ftp_anonymous = None
     git_repo = None
     web_targets = []
@@ -108,17 +110,50 @@ def parse_nmap_xml(xml_file, target):
     # ports that are commonly web services
     web_ports = {"80", "443", "8080", "8000", "8008","8081", "8443", "8888", "3000", "5000", "7001"}
 
-    # attempt to get hostname from http-title redirect (should always be first)
-    for script in root.findall(".//script[@id='http-title']"):
+    # UPDATED DOMAIN EXTRACTION
+    # 1. RDP NTLM INFO
+    for script in root.findall(".//script[@id='rdp-ntlm-info']"):
         output = script.get("output", "")
-        match = re.search(r'http://([a-zA-Z0-9.-]+)', output)
+        match = re.search(r'DNS_Domain_Name:\s*([^\s]+)', output)
         if match:
-            redirect_host = match.group(1)
-            if is_valid_hostname(redirect_host, target):
-                hostname = redirect_host
+            candidate = match.group(1)
+            if is_valid_hostname(candidate, target):
+                hostname = candidate
+        domain_match = re.search(r'DNS_Computer_Name:\s*([^\s]+)', output)
+        if domain_match:
+            domain = domain_match.group(1)
+        if hostname or domain:
+            break
+
+    # 2. MSSQL NTLM INFO
+    if not hostname or not domain:
+        for script in root.findall(".//script[@id='ms-sql-ntlm-info']"):
+            output = script.get("output", "")
+            if not hostname:
+                match = re.search(r'DNS_Domain_Name:\s*([^\s]+)', output)
+                if match:
+                    candidate = match.group(1)
+                    if is_valid_hostname(candidate, target):
+                        hostname = candidate
+            if not domain:
+                domain_match = re.search(r'DNS_Computer_Name:\s*([^\s]+)', output)
+                if domain_match:
+                    domain = domain_match.group(1)
+            if hostname or domain:
                 break
 
-    # attempt to get hostname from SSL certificate
+    # 3. HTTP TITLE REDIRECT
+    if not hostname:
+        for script in root.findall(".//script[@id='http-title']"):
+            output = script.get("output", "")
+            match = re.search(r'http://([a-zA-Z0-9.-]+)', output)
+            if match:
+                redirect_host = match.group(1)
+                if is_valid_hostname(redirect_host, target):
+                    hostname = redirect_host
+                    break
+
+    # 4. SSL CERT
     if not hostname:
         for host in root.findall("host"):
             ports = host.find("ports")
@@ -129,8 +164,14 @@ def parse_nmap_xml(xml_file, target):
                         output = script.get("output", "")
                         match = re.search(r'commonName=([^/,\n]+)', output)
                         if match:
-                            hostname = match.group(1)
-                            break
+                            candidate = match.group(1)
+
+                            if candidate.lower() == "ssl_self_signed_fallback":
+                                continue
+
+                            if is_valid_hostname(candidate, target):
+                                hostname = candidate
+                                break
 
             if hostname:
                 break
@@ -141,8 +182,14 @@ def parse_nmap_xml(xml_file, target):
                 if "commonName=" in output:
                     match = re.search(r'commonName=([^/,\n]+)', output)
                     if match:
-                        hostname = match.group(1)
-                        break
+                        candidate = match.group(1)
+
+                        if candidate.lower() == "ssl_self_signed_fallback":
+                            continue
+
+                        if is_valid_hostname(candidate, target):
+                            hostname = candidate
+                            break
 
     # Parse open ports
     for host in root.findall("host"):
@@ -203,6 +250,7 @@ def parse_nmap_xml(xml_file, target):
     return {
         "ports": open_ports,
         "hostname": hostname,
+        "domain": domain,
         "ftp_anonymous": ftp_anonymous,
         "git_repo": git_repo,
         "web_targets": web_targets

@@ -11,7 +11,8 @@ def run_smbenum(target, show_output=False):
         "cme_output": "",
         "rid_brute_output": "",
         "anonymous_bind": False,
-        "users": []
+        "users": [],
+        "writable_shares": []
     }
 
     stdout_opt = None if show_output else subprocess.PIPE
@@ -130,9 +131,14 @@ def run_smbenum(target, show_output=False):
                         if match:
                             shares.append(match.group(1))
 
+                    writable_found = False
+
                     # test read access on each share
                     for share in shares:
                         try:
+                            readable = False
+                            writable = False
+
                             test_cmd = [
                                 "smbclient",
                                 "-N",
@@ -149,11 +155,42 @@ def run_smbenum(target, show_output=False):
                             )
 
                             if test_proc.stdout and "NT_STATUS_ACCESS_DENIED" not in test_proc.stdout:
-                                print(f"\n[+] {share} - READABLE")
+                                readable = True
+
+                                # test write access
+                                write_cmd = [
+                                    "smbclient",
+                                    "-N",
+                                    f"//{target}/{share}",
+                                    "-c",
+                                    "put /dev/null easyrecon_write_test.tmp"
+                                ]
+
+                                write_proc = subprocess.run(
+                                    write_cmd,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL,
+                                    text=True
+                                )
+
+                                if write_proc.stdout and "NT_STATUS_ACCESS_DENIED" not in write_proc.stdout:
+                                    writable = True
+                                    writable_found = True
+                                    results["writable_shares"].append(share)
+
+                                status = ["READABLE"]
+                                if writable:
+                                    status.append("WRITABLE")
+
+                                print(f"\n[+] {share} - {', '.join(status)}")
                                 print(test_proc.stdout)
 
                         except Exception:
                             pass
+
+                    if writable_found:
+                        print("[!] Writable SMB share detected")
+                        print("[!] NTLM Theft via .lnk may be possible (use responder/NTLM_theft.py)")
 
             else:
                 print("[-] Anonymous bind not allowed.")

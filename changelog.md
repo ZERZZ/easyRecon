@@ -1,5 +1,14 @@
 # EasyRecon Changelog
 
+### v1.6 - Mar 15, 2026
+- Added asrep_roast.py module which runs if usernames are found from other modules. 
+- Added usecreds.py module which determines where credentials can authenticate to. 
+- Added a check for writable shares on SMB and a suggestion to attempt NTLM_theft.
+- Added --aggressive that automatically attempts AS-REP hash cracking via hashcrack.py 
+- Added null bind to rpcenum.py module, now also enumerates/filters users.
+- Added user enumeration to ldapenum.py. 
+- Improved parsing in portscan.py to correctly identify hostname.
+
 ### v1.5 - Mar 13, 2026
 - Added RID cycling and username extraction to smbenum.py.
 - Added nullbind attempt to smbenum.py if crackmapexec fails.

@@ -10,10 +10,12 @@ def run_ldapenum(target, show_output=False):
     results = {
         "anonymous_bind": False,
         "ldapsearch_output": "",
-        "getadusers_output": ""
+        "ldap_users_output": "",
+        "getadusers_output": "",
+        "users": [],
+        "domain": None
     }
 
-    stdout_opt = None if show_output else subprocess.PIPE
     stderr_opt = None if show_output else subprocess.DEVNULL
 
     # step 1: attempt anonymous bind
@@ -55,12 +57,12 @@ def run_ldapenum(target, show_output=False):
         print(f"[!] ldapsearch error: {e}")
         return results
 
-    # step 2: if bind successful try GetADUsers
+    # step 2: if bind successful try enumeration
     if results["anonymous_bind"]:
         try:
-            # try to extract domain naming context
-            domain_match = re.search(r"namingContexts:\s*(.*)", results["ldapsearch_output"])
+            domain_match = re.search(r"defaultNamingContext:\s*(.*)", results["ldapsearch_output"])
             domain = None
+            domain_dn = None
 
             if domain_match:
                 domain_dn = domain_match.group(1).strip()
@@ -68,7 +70,70 @@ def run_ldapenum(target, show_output=False):
 
             if domain:
                 print(f"[*] Domain detected: {domain}")
+                results["domain"] = domain
 
+                # step 2.1: enumerate LDAP users
+                ldap_user_cmd = [
+                    "ldapsearch",
+                    "-x",
+                    "-H", f"ldap://{target}",
+                    "-b", domain_dn,
+                    "(objectClass=user)",
+                    "sAMAccountName"
+                ]
+
+                ldap_user_proc = subprocess.run(
+                    ldap_user_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr_opt,
+                    text=True,
+                    timeout=12
+                )
+
+                ldap_user_output = ldap_user_proc.stdout
+
+                if ldap_user_output:
+                    results["ldap_users_output"] = ldap_user_output
+
+                    if show_output:
+                        print(ldap_user_output)
+
+                    users = []
+
+                    for line in ldap_user_output.splitlines():
+                        match = re.search(r"sAMAccountName:\s*(\S+)", line)
+                        if match:
+                            user = match.group(1)
+
+                            if (
+                                user.endswith("$")
+                                or user.startswith("$")
+                                or user.startswith("SM_")
+                                or user.startswith("HealthMailbox")
+                                or user.startswith("SystemMailbox")
+                                or user.startswith("Migration.")
+                                or user.startswith("DiscoverySearchMailbox")
+                                or user.startswith("FederatedEmail")
+                                or user.startswith("Exchange")
+                                or user in ["Guest", "DefaultAccount"]
+                            ):
+                                continue
+
+                            users.append(user)
+
+                    results["users"] = users
+
+                    if users:
+                        print("[+] Discovered domain users:")
+                        for u in users:
+                            print(f"    {u}")
+
+                    print("[+] LDAP user enumeration successful.")
+
+                else:
+                    print("[-] LDAP user enumeration returned no output.")
+
+                # step 2.2: run GetADUsers
                 getad_cmd = [
                     "GetADUsers.py",
                     "-no-pass",
@@ -78,23 +143,27 @@ def run_ldapenum(target, show_output=False):
 
                 getad_proc = subprocess.run(
                     getad_cmd,
-                    stdout=stdout_opt,
+                    stdout=subprocess.PIPE,
                     stderr=stderr_opt,
                     text=True,
                     timeout=15
                 )
 
-                output = getad_proc.stdout if getad_proc.stdout else ""
+                output = getad_proc.stdout or ""
 
                 if output:
                     results["getadusers_output"] = output
 
-                    if "operationsError" in output or "failed" in output.lower():
-                        print("[-] GetADUsers failed (bind not permitted for search).")
-                    elif "Name" in output and "PasswordLastSet" in output:
+                    if show_output:
+                        print(output)
+
+                    if "Name" in output and "PasswordLastSet" in output:
                         print("[+] GetADUsers enumeration successful.")
+                    elif "operationsError" in output or "failed" in output.lower():
+                        print("[-] GetADUsers failed (bind not permitted for search).")
                     else:
-                        print("[*] GetADUsers completed (no users returned).")
+                        print("[*] GetADUsers completed.")
+
                 else:
                     print("[-] GetADUsers returned no output.")
 
@@ -102,10 +171,10 @@ def run_ldapenum(target, show_output=False):
                 print("[*] Could not extract domain from LDAP response.")
 
         except FileNotFoundError:
-            print("[!] GetADUsers.py not found.")
+            print("[!] Required LDAP tools not found.")
         except subprocess.TimeoutExpired:
-            print("[!] GetADUsers timed out.")
+            print("[!] LDAP enumeration timed out.")
         except Exception as e:
-            print(f"[!] GetADUsers error: {e}")
+            print(f"[!] LDAP enumeration error: {e}")
 
     return results
