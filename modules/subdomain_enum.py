@@ -3,6 +3,7 @@ import requests
 import random
 import urllib3
 import json
+import ipaddress
 
 from utils.output import print
 
@@ -10,45 +11,51 @@ from utils.output import print
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-def run_subdomain_enum(domain, scan_target, ports, show_output=False):
+def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="http"):
     """Run DNS subdomain enumeration against the target domain."""
     
-    # strip prepended subdomain if present 
-    parts = domain.split(".")
-    if len(parts) > 2:
-        domain = ".".join(parts[1:])
+    # skip if domain is IP address (obviously wont work. )
+    try:
+        ipaddress.ip_address(domain)
+        print(f"[-] Skipping subdomain enumeration for IP: {domain}")
+        return []
+    except ValueError:
+        pass
+
+    # strip prepended subdomain if present
+    try:
+        ipaddress.ip_address(domain)
+    except ValueError:
+        parts = domain.split(".")
+        if len(parts) > 2:
+            domain = ".".join(parts[1:])
 
     print(f"[*] Running subdomain enumeration for {domain}...")
 
-    # extract scheme from scan_target provided by main.py
-    scheme = scan_target.split("://")[0]
-
-    baseline_size = get_baseline_content_length(domain, scheme)
+    # baseline check (now protocol-agnostic)
+    baseline_size = get_baseline_content_length(domain)
     if baseline_size is None:
-        print("[!] Could not determine baseline content length. Skipping subdomain enumeration.")
-        return []
-
-    print(f"[*] Baseline content length: {baseline_size}")
+        print("[!] Could not determine baseline content length. Continuing without filtering.")
+    else:
+        print(f"[*] Baseline content length: {baseline_size}")
 
     ffuf_cmd = [
         "ffuf",
-        "-w", "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
-        "-u", f"{scheme}://FUZZ.{domain}",
-        "-fs", str(baseline_size),
-        "-t", "25",
-        "-of", "json"
+        "-w", "/usr/share/seclists/Discovery/DNS/bitquark-subdomains-top100000.txt",
+        "-u", f"{scheme}://FUZZ.{domain}",   
+        "-mc", "all",
+        "-of", "json",
+        "-k"
     ]
 
-    # if HTTPS target disable verification
-    if scheme == "https":
-        ffuf_cmd.append("-k")
+    print(f"[DEBUG] Running command: {' '.join(ffuf_cmd)}")
 
     try:
         result = subprocess.run(
             ffuf_cmd,
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=300  
         )
     except subprocess.TimeoutExpired:
         print("[!] ffuf scan timed out.")
@@ -72,28 +79,26 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False):
     return subdomains
 
 
-def get_baseline_content_length(domain, scheme='http'):
-    """Get Content-Length for a random subdomain to detect wildcard responses."""
+def get_baseline_content_length(domain):
+    """Try HTTP then HTTPS to determine baseline response size."""
     fake_sub = f"nonexistent-{random.randint(1, 10000000)}"
-    url = f"{scheme}://{fake_sub}.{domain}"
 
-    try:
-        resp = requests.get(
-            url,
-            timeout=5,
-            allow_redirects=False,
-            verify=False
-        )
+    for scheme in ["http", "https"]:
+        url = f"{scheme}://{fake_sub}.{domain}"
+        try:
+            resp = requests.get(
+                url,
+                timeout=5,
+                allow_redirects=True,
+                verify=False
+            )
 
-        # Prefer header if present
-        if 'Content-Length' in resp.headers:
-            return int(resp.headers['Content-Length'])
+            return len(resp.content)
 
-        # Fallback to actual body length
-        return len(resp.content)
+        except requests.exceptions.RequestException:
+            continue
 
-    except requests.exceptions.RequestException:
-        return None
+    return None
 
 
 def parse_ffuf_output(output, domain):

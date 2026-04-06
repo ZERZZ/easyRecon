@@ -15,8 +15,26 @@ def run_portscan(target, show_output=False):
         stdout_opt = None if show_output else subprocess.DEVNULL
         stderr_opt = None if show_output else subprocess.DEVNULL
 
+        # step 1: Full port discovery
         subprocess.run(
-            ["nmap", "-sS", "-sV", "-sC", "-T4", "--noninteractive", "-oX", "scan.xml", "--top-ports", "1000", target],
+            ["nmap", "-p-", "--min-rate", "1000", "-T4", "--noninteractive", "-oX", "port_discovery.xml", target],
+            check=True,
+            stdout=stdout_opt,
+            stderr=stderr_opt
+        )
+
+        # step 2: extract discovered ports
+        ports = extract_open_ports("port_discovery.xml")
+
+        if not ports:
+            print("[!] No open ports discovered.")
+            return {"ports": [], "hostname": None, "web_targets": []}
+
+        ports_str = ",".join(ports)
+
+        # step 3: Targeted service detection on discovered ports
+        subprocess.run(
+            ["nmap", "-sS", "-sV", "-sC", "-T4", "--noninteractive", "-oX", "scan.xml", "-p", ports_str, target],
             check=True,
             stdout=stdout_opt,
             stderr=stderr_opt
@@ -28,6 +46,25 @@ def run_portscan(target, show_output=False):
     except subprocess.CalledProcessError:
         print("[!] Nmap scan failed.")
         return {"ports": [], "hostname": None, "web_targets": []}
+
+
+def extract_open_ports(xml_file):
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+
+    ports = []
+
+    for host in root.findall("host"):
+        ports_elem = host.find("ports")
+        if ports_elem is None:
+            continue
+
+        for port in ports_elem.findall("port"):
+            state = port.find("state")
+            if state is not None and state.get("state") == "open":
+                ports.append(port.get("portid"))
+
+    return ports
 
 
 def is_valid_hostname(hostname, target):

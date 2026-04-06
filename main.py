@@ -10,6 +10,8 @@ from modules.gitdump import run_gitdump
 from modules.subdomain_enum import run_subdomain_enum
 from modules.asrep_roast import run_asrep_roast
 from modules.testcreds import run_testcreds
+from modules.nfsenum import run_nfsenum
+from modules.grpcenum import run_grpcenum
 
 from utils.output import section, banner as print_banner, print
 from utils.banner import main_banner
@@ -26,52 +28,59 @@ def sanitize_target(target):
     return target.strip()
 
 
+# SERVICE DETECTION LAYER (KEEP UPDATING)
+
+SERVICE_MAP = {
+    "ftp": ["ftp"],
+    "smb": ["microsoft-ds", "netbios-ssn"],
+    "ldap": ["ldap", "ldaps"],
+    "rpc": ["msrpc", "rpcbind"],
+    "nfs": ["nfs"],
+    "grpc": ["grpc"],
+}
+
+
+def has_port(ports, port):
+    return any(p.get("port") == str(port) for p in ports)
+
+
+def has_service(ports, service_key):
+    return any(
+        p.get("service") in SERVICE_MAP.get(service_key, [])
+        for p in ports
+    )
+
+
+def has_service_or_port(ports, service_key, port):
+    return has_service(ports, service_key) or has_port(ports, port)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='EasyRecon - Reconnaissance & Enumeration Tool',
         usage='python main.py <target> [options] [--test-creds user:pass]'
     )
 
-    parser.add_argument(
-        'target',
-        help='Target IP or domain (e.g., 10.129.5.69, http://example.com)'
-    )
-
+    parser.add_argument('target')
     parser.add_argument(
         '-o', '--only',
         choices=[
             'all', 'portscan', 'dirbuster', 'vhostenum',
             'subdomains', 'techstack', 'smbenum',
-            'ldapenum', 'rpcenum', 'ftpenum'
+            'ldapenum', 'rpcenum', 'ftpenum', 'nfsenum', 'grpcenum'
         ],
-        default='all',
-        help='Run only a specific module'
+        default='all'
     )
 
-    parser.add_argument(
-        '-v', '--verbose',
-        action='store_true',
-        help='Show raw tool output'
-    )
-
-    parser.add_argument(
-        '--aggressive',
-        action='store_true',
-        help='Enable aggressive actions such as password cracking'
-    )
-
-    parser.add_argument(
-        '--test-creds',
-        help='Test supplied credentials against discovered services (format user:pass)'
-    )
+    parser.add_argument('-v', '--verbose', action='store_true')
+    parser.add_argument('--aggressive', action='store_true')
+    parser.add_argument('--test-creds')
 
     args = parser.parse_args()
     target = sanitize_target(args.target)
     only = args.only
 
-    ## main banner
     main_banner()
-
     print_banner(target)
 
     scan_results = run_portscan(target, args.verbose)
@@ -83,39 +92,49 @@ def main():
     git_repo = scan_results.get("git_repo")
     web_targets = scan_results.get("web_targets", [])
 
+    scheme = "https" if web_targets and web_targets[0].startswith("https://") else "http"
+
     if args.test_creds:
         run_testcreds(target, ports, args.test_creds, args.verbose)
 
-    # central user store
     users = set()
 
+    # MODULE DISPATCH (NOW SERVICES)
     module_dispatch = {
         "portscan": lambda: None,
 
         "ftpenum": lambda: run_ftpenum(target, args.verbose)
-        if any(p.get("port") == "21" for p in ports)
-        else print("[*] Port 21 not detected. FTP not available."),
+        if has_service_or_port(ports, "ftp", 21)
+        else print("[*] FTP not detected."),
 
         "vhostenum": lambda: run_vhost_enum(hostname, web_targets[0], ports, args.verbose)
-        if web_targets else print("[*] No web service detected. Skipping vhost enumeration."),
+        if web_targets else print("[*] No web service detected."),
 
-        "subdomains": lambda: run_subdomain_enum(hostname, web_targets[0], ports, args.verbose)
-        if web_targets else print("[*] No web service detected. Skipping subdomain enumeration."),
+        "subdomains": lambda: run_subdomain_enum(hostname, web_targets[0], ports, args.verbose, scheme=scheme)
+        if web_targets else print("[*] No web service detected."),
 
         "techstack": lambda: run_tech_stack(web_targets[0], hostname, ports)
-        if web_targets else print("[*] No web service detected. Skipping technology stack detection."),
+        if web_targets else print("[*] No web service detected."),
 
         "smbenum": lambda: run_smbenum(target, args.verbose)
-        if any(p.get("port") == "445" for p in ports)
-        else print("[*] Port 445 not detected. SMB not available."),
+        if has_service_or_port(ports, "smb", 445)
+        else print("[*] SMB not detected."),
 
         "ldapenum": lambda: run_ldapenum(target, args.verbose)
-        if any(p.get("port") == "389" for p in ports)
-        else print("[*] Port 389 not detected. LDAP not available."),
+        if has_service_or_port(ports, "ldap", 389)
+        else print("[*] LDAP not detected."),
 
         "rpcenum": lambda: run_rpcenum(target, args.verbose)
-        if any(p.get("port") == "135" for p in ports)
-        else print("[*] Port 135 not detected. RPC not available."),
+        if has_service_or_port(ports, "rpc", 135)
+        else print("[*] RPC not detected."),
+
+        "nfsenum": lambda: run_nfsenum(target, args.verbose)
+        if has_service_or_port(ports, "nfs", 2049)
+        else print("[*] NFS not detected."),
+
+        "grpcenum": lambda: run_grpcenum(target, args.verbose)
+        if has_service_or_port(ports, "grpc", 50051)
+        else print("[*] gRPC not detected."),
 
         "dirbuster": lambda: [run_dirbuster(url, hostname, args.verbose) for url in web_targets]
     }
@@ -140,6 +159,7 @@ def main():
         module_dispatch[only]()
         return
 
+    # FULL RUN (ALL MODULES) 
     section("Open Ports Found")
     for p in ports:
         print(f" - {p['port']}/{p['protocol']} ({p['service']})")
@@ -156,23 +176,21 @@ def main():
         git_path = git_repo.splitlines()[0].strip()
         run_gitdump(git_path)
 
-    if any(p.get("port") == "21" for p in ports):
+    if has_service_or_port(ports, "ftp", 21):
         section("FTP Enumeration")
-        print("[*] FTP detected on port 21.")
         run_ftpenum(target, args.verbose)
     else:
         print("[*] No FTP service detected.")
 
-    if any(p.get("port") == "445" for p in ports):
+    if has_service_or_port(ports, "smb", 445):
         section("SMB Enumeration")
-        print("[*] SMB detected on port 445.")
         smb_results = run_smbenum(target, args.verbose)
         if smb_results and smb_results.get("users"):
             users.update(smb_results["users"])
     else:
         print("[*] No SMB service detected.")
 
-    if any(p.get("port") == "389" for p in ports):
+    if has_service_or_port(ports, "ldap", 389):
         section("LDAP Enumeration")
         ldap_results = run_ldapenum(target, args.verbose)
         if ldap_results:
@@ -183,7 +201,7 @@ def main():
     else:
         print("[*] No LDAP service detected.")
 
-    if any(p.get("port") == "135" for p in ports):
+    if has_service_or_port(ports, "rpc", 135):
         section("RPC Enumeration")
         rpc_results = run_rpcenum(target, args.verbose)
         if rpc_results and rpc_results.get("users"):
@@ -191,7 +209,18 @@ def main():
     else:
         print("[*] No RPC service detected.")
 
-    # attempt as rep roasting if any users were discovered
+    if has_service_or_port(ports, "nfs", 2049):
+        section("NFS Enumeration")
+        run_nfsenum(target, args.verbose)
+    else:
+        print("[*] No NFS service detected.")
+
+    if has_service_or_port(ports, "grpc", 50051):
+        section("gRPC Enumeration")
+        run_grpcenum(target, args.verbose)
+    else:
+        print("[*] No gRPC service detected.")
+
     if users:
         section("AS-REP Roasting")
         run_asrep_roast(domain or hostname, target, list(users), verbose=args.verbose, aggressive=args.aggressive)
@@ -206,12 +235,12 @@ def main():
 
         if web_targets:
             section("Subdomain Enumeration")
-            run_subdomain_enum(hostname, web_targets[0], ports, args.verbose)
+            run_subdomain_enum(hostname, web_targets[0], ports, args.verbose, scheme=scheme)
 
             section("VHost Enumeration")
             run_vhost_enum(hostname, web_targets[0], ports, args.verbose)
         else:
-            print("[*] No web service detected. Skipping subdomain and vhost enumeration.")
+            print("[*] No web service detected.")
 
     if web_targets:
         section("Directory Enumeration")

@@ -40,6 +40,7 @@ nmap
 feroxbuster
 ffuf
 curl
+grpcurl
 python3
 python3-pip
 pipx
@@ -79,6 +80,11 @@ EasyRecon is built around a **modular enumeration pipeline**, allowing different
 - RPC anonymous connection attempt with `enumdomusers` enumeration
 - FTP anonymous connection attempt and **analysis of accessible files**
 - AS-REP roasting and optional hash cracking with `--aggressive`
+
+## Network Enumeration
+
+- NFS enumeration and file mounting for further analysis  
+- gRPC service enumeration using `grpcurl`
 
 ---
 
@@ -129,7 +135,7 @@ python3 main.py 10.10.10.10 -o smbenum -v
 ### Full command syntax:
 
 ```bash
-python3 main.py <target> [-o all|portscan|dirbuster|vhostenum|subdomains|techstack|smbenum|ldapenum|rpcenum|ftpenum] [-v] [--aggressive]
+python3 main.py <target> [-o all|portscan|dirbuster|vhostenum|subdomains|techstack|smbenum|ldapenum|rpcenum|ftpenum|nfsenum] [-v] [--aggressive]
 ```
 
 ---

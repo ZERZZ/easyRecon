@@ -1,5 +1,14 @@
 # EasyRecon Changelog
 
+### v1.7 - April 6, 2026
+- Added nfsenum.py module which attempts to access file share and mounts share to /tmp.
+- Added gRPCenum.py module which attempts to enumerate methods.
+- Fixed an issue with subdomain_enum.py removing numbers from IP instead of prepended subdomain. 
+- Fixed issue with subdomain_enum.py missing https targets. 
+- Fixed issue with legacy machines not allowing passive mode, added initial directory listing.
+- Updated logic in portscan.py to cover more than the top 1000 ports. 
+- Modules are now ran based on service identification first to catch services on non standard ports. 
+
 ### v1.6 - Mar 15, 2026
 - Added asrep_roast.py module which runs if usernames are found from other modules. 
 - Added usecreds.py module which determines where credentials can authenticate to. 

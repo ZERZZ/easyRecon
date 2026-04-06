@@ -124,6 +124,9 @@ def run_dirbuster(target, hostname=None, show_output=False):
             "-t", "50"
         ]
 
+        if hostname:
+            command.extend(["-H", f"Host: {hostname}"])
+
         if scan_target.startswith("https://"):
             command.append("--insecure")
 

@@ -41,8 +41,12 @@ def enumerate_directory(ftp, path, results):
 
     try:
         items = ftp.nlst()
-    except error_perm:
-        return
+    except Exception:
+        # retry once (sometimes flaky)
+        try:
+            items = ftp.nlst()
+        except Exception:
+            return
 
     for item in items:
         if item in [".", ".."]:
@@ -78,21 +82,47 @@ def run_ftpenum(target, show_output=False):
     try:
         ftp = FTP(target, timeout=5)
 
+        # force active mode (for legacy machines)
+        ftp.set_pasv(False)
+
         ftp.login("anonymous", "anonymous@")
 
         results["anonymous_login"] = True
-        print("[+] Anonymous FTP login successful.")
+        print("[+] Anonymous FTP login successful.\n")
+
+        # list first directories 
+        try:
+            root_items = ftp.nlst()
+            dirs = []
+
+            for item in root_items:
+                current_dir = ftp.pwd()
+                try:
+                    ftp.cwd(item)
+                    ftp.cwd(current_dir)
+                    dirs.append(item)
+                except error_perm:
+                    continue
+
+            if dirs:
+                print("[+] Top-level directories:\n")
+                for d in dirs:
+                    print(f" - {d}")
+                print("") 
+        except Exception:
+            pass
 
         enumerate_directory(ftp, "/", results)
 
         ftp.quit()
 
         if results["interesting_files"]:
-            print("[+] Interesting files found:")
+            print("[+] Interesting files found:\n")
             for f in results["interesting_files"]:
                 print(f" - {f}")
+            print("")
         else:
-            print("[-] No interesting files found.")
+            print("[-] No interesting files found.\n")
 
     except Exception as e:
         print(f"[!] FTP enumeration error: {e}")
