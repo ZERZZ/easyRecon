@@ -3,7 +3,17 @@ import subprocess
 from utils.output import print
 
 
-def run_grpcenum(target, show_output=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+def run_grpcenum(target, show_output=False, recon_data=None):
     print(f"[*] Running gRPC enumeration against {target}...")
 
     results = {
@@ -23,7 +33,12 @@ def run_grpcenum(target, show_output=False):
             check=True
         )
     except subprocess.CalledProcessError:
-        print("[!] grpcurl not installed. Skipping gRPC enumeration.")
+            _append_unique(recon_data, "interesting_findings", [f"gRPC service: {name}" for name in results["services"].keys()])
+
+    if recon_data is not None:
+        if results.get("grpc_detected") and results.get("services"):
+            _append_unique(recon_data, "interesting_findings", [f"gRPC service: {name}" for name in results["services"].keys()])
+
         return results
 
     try:

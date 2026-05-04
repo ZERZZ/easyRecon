@@ -70,11 +70,23 @@ def enumerate_directory(ftp, path, results):
                 results["interesting_files"].append(full_path)
 
 
-def run_ftpenum(target, show_output=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+def run_ftpenum(target, show_output=False, recon_data=None):
     print(f"[*] Running FTP enumeration against {target}...")
 
     results = {
-        "anonymous_login": False,
+        "connection": False,
+        "enumeration": False, 
+        "error": None, 
         "directories": [],
         "interesting_files": []
     }
@@ -87,7 +99,7 @@ def run_ftpenum(target, show_output=False):
 
         ftp.login("anonymous", "anonymous@")
 
-        results["anonymous_login"] = True
+        results["connection"] = True
         print("[+] Anonymous FTP login successful.\n")
 
         # list first directories 
@@ -109,22 +121,36 @@ def run_ftpenum(target, show_output=False):
                 for d in dirs:
                     print(f" - {d}")
                 print("") 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Error listing root directories: {e}")
 
         enumerate_directory(ftp, "/", results)
 
         ftp.quit()
 
+        # mark enumeration success only if we found interesting files (for ai analysis, should probably adjust later.)
         if results["interesting_files"]:
+            results["enumeration"] = True
             print("[+] Interesting files found:\n")
             for f in results["interesting_files"]:
                 print(f" - {f}")
             print("")
         else:
+            results["error"] = "No interesting files found"
             print("[-] No interesting files found.\n")
 
+    except error_perm as e:
+        results["error"] = f"Anonymous FTP login failed: {e}"
+        print(f"[-] Anonymous FTP login failed: {e}")
     except Exception as e:
+        results["error"] = str(e)
         print(f"[!] FTP enumeration error: {e}")
+
+    if recon_data is not None:
+        if results.get("connection"):
+            _append_unique(recon_data, "interesting_findings", "Anonymous FTP login successful")
+        if results.get("interesting_files"):
+            results["enumeration"] = True
+            _append_unique(recon_data, "interesting_findings", [f"FTP interesting file: {path}" for path in results["interesting_files"]])
 
     return results

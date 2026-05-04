@@ -87,7 +87,18 @@ def _detect_wildcard(target, hostname=None):
     }
 
 
-def run_dirbuster(target, hostname=None, show_output=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+
+def run_dirbuster(target, hostname=None, show_output=False, recon_data=None):
     scan_target = target.rstrip("/")
 
     print(f"[*] Running feroxbuster against {scan_target}...")      
@@ -194,6 +205,7 @@ def run_dirbuster(target, hostname=None, show_output=False):
                 for hit in valuable_hits:
                     marker = "[AUTH]" if hit['status'] in {401, 403} else "[OK]"
                     print(f"  {marker} [{hit['status']}] {hit['url']}")
+                _append_unique(recon_data, "web_endpoints", [hit['url'] for hit in valuable_hits])
             else:
                 successful = [h for h in all_hits if 200 <= h['status'] < 400]
                 if successful:

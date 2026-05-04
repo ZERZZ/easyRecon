@@ -5,7 +5,19 @@ from utils.output import section, print
 
 ## this is repetitive and can definitely be polished; expand to use other services / polish in future
 
-def run_testcreds(target, ports, cred_string, verbose=False):
+## also no need to add creds to recon data; remove in future it adds nothing, just log successful logins. 
+
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
     section("Credential Reuse Testing")
 
@@ -37,6 +49,8 @@ def run_testcreds(target, ports, cred_string, verbose=False):
 
             if result.returncode == 0:
                 print("[+] SMB authentication successful!")
+                if recon_data is not None:
+                    _append_unique(recon_data, "credentials", f"{username}:{password}")
 
             else:
                 print("[-] SMB authentication failed.")
@@ -69,6 +83,8 @@ def run_testcreds(target, ports, cred_string, verbose=False):
 
             if "230" in result.stdout:
                 print("[+] FTP authentication successful!")
+                if recon_data is not None:
+                    _append_unique(recon_data, "credentials", f"{username}:{password}")
 
             else:
                 print("[-] FTP authentication failed.")
@@ -99,6 +115,8 @@ def run_testcreds(target, ports, cred_string, verbose=False):
 
             if "dn:" in result.stdout.lower():
                 print("[+] LDAP authentication successful!")
+                if recon_data is not None:
+                    _append_unique(recon_data, "credentials", f"{username}:{password}")
 
             else:
                 print("[-] LDAP authentication failed.")
@@ -127,6 +145,8 @@ def run_testcreds(target, ports, cred_string, verbose=False):
 
             if "Cannot" not in result.stderr:
                 print("[+] RPC authentication successful!")
+                if recon_data is not None:
+                    _append_unique(recon_data, "credentials", f"{username}:{password}")
 
             else:
                 print("[-] RPC authentication failed.")

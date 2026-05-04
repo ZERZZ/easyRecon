@@ -12,7 +12,18 @@ from utils.output import print
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-def run_vhost_enum(domain, scan_target, ports, show_output=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+
+def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=None):
     """Run vhost enumeration against the target IP using Host headers."""
 
     # strip prepended subdomain if present 
@@ -81,6 +92,7 @@ def run_vhost_enum(domain, scan_target, ports, show_output=False):
         print(f"[+] Found {len(vhosts)} vhosts:")
         for vhost in vhosts:
             print(f"    - {vhost}")
+        _append_unique(recon_data, "interesting_findings", [f"Virtual host: {vhost}" for vhost in vhosts])
     else:
         print("[*] No vhosts found.")
 

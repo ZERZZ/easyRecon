@@ -1,5 +1,14 @@
 # EasyRecon Changelog
 
+### v1.8 - May 4, 2026
+- Added cve_lookup.py module, which looks up CVEs/exploits on nvd.nist/ExploitDB (needs refining drastically).
+- Updated technology_stack.py to include data collected by Wappalyzer. 
+- Fixed BlockingIOError crash in output.py when printing large outputs. 
+- Updated smbenum.py with tighter criteria for successful null bind confirmation. 
+- Added a .json output with key information gathered.
+- Updated all modules with better success criteria for initial connection/enumeration/errors.
+- Added experimental AI analysis and recommendations based on json key info.  
+
 ### v1.7 - April 6, 2026
 - Added nfsenum.py module which attempts to access file share and mounts share to /tmp.
 - Added gRPCenum.py module which attempts to enumerate methods.

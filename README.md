@@ -8,6 +8,7 @@ EasyRecon integrates multiple industry standard security tools and chains enumer
 
 ---
 
+
 # Disclaimer
 
 This tool is intended for **educational use and authorised penetration testing only**.  
@@ -16,6 +17,7 @@ Do not use this tool against systems without explicit permission.
 The author is **not responsible for misuse or damage** caused by this software.
 
 ---
+
 
 # Requirements
 
@@ -51,21 +53,52 @@ smbclient
 impacket
 ldapsearch
 rpcclient
+searchsploit
 ```
 
 These tools should be available in your system PATH for full functionality.
 
+## AI Analysis (Experimental)
+
+EasyRecon includes an **optional AI-assisted analysis module** designed to help interpret reconnaissance data and highlight potentially interesting findings. 
+
+### Setup
+
+Install Ollama:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Pull a supported model:
+
+```bash
+ollama pull phi3
+```
+
+### Important Disclaimer
+
+This feature is **experimental and should not be relied upon for accuracy**.
+
+- Output may be **incorrect, incomplete, or misleading**
+- It may produce **false positives or miss critical vulnerabilities**
+- It does **not replace manual analysis or professional judgement**
+
+All findings must be **manually verified** before use in any report or engagement.
+
 ---
+
 
 # Features
 
-EasyRecon is built around a **modular enumeration pipeline**, allowing different modules to run based on detected services.
+EasyRecon is built around a **modular enumeration pipeline**, allowing different modules to automatically execute based on detected services. 
 
 ## Web Enumeration
 
 - TCP port scanning with service detection
 - SSL certificate hostname extraction
-- Technology stack detection (Apache, Nginx, PHP, WordPress, etc.)
+- Technology stack detection using Wappalyzer / sourcecode / headers inspection 
+- Identified technologies mapped to known vulnerabilities and potential exploits
 - HTTP header analysis
 - Subdomain enumeration using host header wordlists
 - Virtual host fuzzing
@@ -86,7 +119,12 @@ EasyRecon is built around a **modular enumeration pipeline**, allowing different
 - NFS enumeration and file mounting for further analysis  
 - gRPC service enumeration using `grpcurl`
 
+## AI Analysis (Experimental)
+
+- Optional AI-assisted analysis to help interpret reconnaissance output and highlight interesting findings
+
 ---
+
 
 # Installation
 
@@ -112,6 +150,7 @@ Ensure the required external tools are installed on your system.
 
 ---
 
+
 # Usage
 
 ### Basic scan
@@ -135,10 +174,11 @@ python3 main.py 10.10.10.10 -o smbenum -v
 ### Full command syntax:
 
 ```bash
-python3 main.py <target> [-o all|portscan|dirbuster|vhostenum|subdomains|techstack|smbenum|ldapenum|rpcenum|ftpenum|nfsenum] [-v] [--aggressive]
+python3 main.py <target> [-o all|portscan|dirbuster|vhostenum|subdomains|techstack|smbenum|ldapenum|rpcenum|ftpenum|nfsenum] [-v] [--aggressive] [-ai]
 ```
 
 ---
+
 
 # Example
 
@@ -172,6 +212,7 @@ When `--aggressive` is enabled, EasyRecon will attempt to crack discovered hashe
 Potential future enhancements for EasyRecon include:
 
 - Additional Active Directory attack techniques
-- Better parsing and analysis of data 
+- Improved AI-assisted analysis and reduction of noisy output
+- Improved CVE lookup / suggestions, less noise
 - Improved output reporting
 - Additional service enumeration modules

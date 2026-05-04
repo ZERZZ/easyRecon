@@ -4,19 +4,33 @@ import re
 from utils.output import print
 
 
-def run_rpcenum(target, show_output=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+def run_rpcenum(target, show_output=False, recon_data=None):
     print(f"[*] Running RPC enumeration against {target}...")
 
     results = {
-        "null_bind": False,
+        "connection": False,
+        "enumeration": False,
+        "error": None,
         "enumdomusers_output": "",
         "users": []
     }
 
+    ERROR_KEYWORDS = ["NT_STATUS_", "denied", "failed", "error", "Error", "access denied", "not successful"]
+
     stdout_opt = None if show_output else subprocess.PIPE
     stderr_opt = None if show_output else subprocess.DEVNULL
 
-    # attempt rpc null bind
+    # Step 1: attempt rpc null bind 
     try:
         rpc_cmd = [
             "rpcclient",
@@ -36,20 +50,24 @@ def run_rpcenum(target, show_output=False):
         )
 
         if rpc_proc.returncode == 0:
-            results["null_bind"] = True
+            results["connection"] = True
             print("[+] RPC null bind successful.")
         else:
+            results["error"] = "RPC null bind failed"
             print("[-] RPC null bind failed.")
+            return results
 
     except FileNotFoundError:
         print("[!] rpcclient not found.")
+        results["error"] = "rpcclient not found"
         return results
     except Exception as e:
         print(f"[!] rpcclient error: {e}")
+        results["error"] = str(e)
         return results
 
-    # attempt enumdomusers if null bind worked
-    if results["null_bind"]:
+    # step 2.2: attempt enumdomusers if null bind worked
+    if results["connection"]:
         try:
             enum_cmd = [
                 "rpcclient",
@@ -70,7 +88,13 @@ def run_rpcenum(target, show_output=False):
 
             output = enum_proc.stdout or ""
 
-            if output and "NT_STATUS_ACCESS_DENIED" not in output:
+            # check for explicit errors FIRST
+            if any(err in output for err in ERROR_KEYWORDS) or enum_proc.returncode != 0:
+                results["error"] = f"Enumeration failed: {[err for err in ERROR_KEYWORDS if err in output]}"
+                print("[-] RPC enumdomusers failed: access denied or error")
+                return results
+
+            if output:
                 results["enumdomusers_output"] = output
 
                 if show_output:
@@ -101,17 +125,24 @@ def run_rpcenum(target, show_output=False):
 
                 results["users"] = users
 
+                # only mark enumeration success if we actually parsed valid users
                 if users:
-                    print("[+] Discovered domain users:")
+                    results["enumeration"] = True
+                    print("[+] RPC enumdomusers successful:")
                     for u in users:
                         print(f"    {u}")
-
-                print("[+] enumdomusers successful.")
+                else:
+                    results["error"] = "No valid users parsed"
+                    print("[-] enumdomusers returned no valid users")
 
             else:
-                print("[-] enumdomusers not successful.")
+                results["error"] = "enumdomusers returned no output"
+                print("[-] enumdomusers returned no output.")
 
+        except FileNotFoundError:
+            print("[!] rpcclient not found for enumdomusers.")
         except Exception as e:
             print(f"[!] enumdomusers error: {e}")
+            results["error"] = str(e)
 
     return results

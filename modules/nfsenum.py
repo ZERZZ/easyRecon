@@ -4,7 +4,17 @@ import os
 from utils.output import print
 
 
-def run_nfsenum(target, show_output=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+def run_nfsenum(target, show_output=False, recon_data=None):
 
     print(f"[*] Running NFS enumeration against {target}...")
 
@@ -69,6 +79,9 @@ def run_nfsenum(target, show_output=False):
         choice = input("[?] Mount discovered NFS shares to /tmp? (y/N): ").strip().lower()
 
         if choice != "y":
+            if recon_data is not None:
+                if results.get("exports"):
+                    _append_unique(recon_data, "interesting_findings", [f"NFS export: {export}" for export in results["exports"]])
             return results
 
         for share in exports:
@@ -162,5 +175,11 @@ def run_nfsenum(target, show_output=False):
             print(f"    sudo usermod -u {uid} james")
             print(f"    sudo groupmod -g {uid} james")
             print("    sudo su james")
+
+    if recon_data is not None:
+        if results.get("exports"):
+            _append_unique(recon_data, "interesting_findings", [f"NFS export: {export}" for export in results["exports"]])
+        if results.get("mounted"):
+            _append_unique(recon_data, "notes", [f"Mounted NFS share: {mnt}" for mnt in results["mounted"]])
 
     return results

@@ -8,7 +8,18 @@ from utils.output import print
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def run_portscan(target, show_output=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+
+def run_portscan(target, show_output=False, recon_data=None):
     print(f"[*] Running nmap against {target}...")
 
     try:
@@ -40,8 +51,27 @@ def run_portscan(target, show_output=False):
             stderr=stderr_opt
         )
 
+        results = parse_nmap_xml("scan.xml", target)
+
+        if recon_data is not None:
+            ports = [p["port"] for p in results["ports"]]
+            services = sorted({p.get("service") for p in results["ports"] if p.get("service")})
+
+            _append_unique(recon_data, "open_ports", ports)
+            _append_unique(recon_data, "services", services)
+            if results.get("ftp_anonymous"):
+                _append_unique(recon_data, "interesting_findings", "Anonymous FTP login allowed")
+            if results.get("git_repo"):
+                _append_unique(recon_data, "interesting_findings", "Exposed git repository detected")
+            if results.get("hostname") and results.get("hostname") != target:
+                _append_unique(recon_data, "notes", f"Detected hostname: {results['hostname']}")
+            if results.get("domain"):
+                _append_unique(recon_data, "notes", f"Detected domain: {results['domain']}")
+            if results.get("web_targets"):
+                _append_unique(recon_data, "notes", "Web service detected by nmap")
+
         print("[*] Nmap scan completed.")
-        return parse_nmap_xml("scan.xml", target)
+        return results
 
     except subprocess.CalledProcessError:
         print("[!] Nmap scan failed.")

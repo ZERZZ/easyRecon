@@ -11,7 +11,18 @@ from utils.output import print
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="http"):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+
+def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="http", recon_data=None):
     """Run DNS subdomain enumeration against the target domain."""
     
     # skip if domain is IP address (obviously wont work. )
@@ -41,7 +52,7 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="ht
 
     ffuf_cmd = [
         "ffuf",
-        "-w", "/usr/share/seclists/Discovery/DNS/bitquark-subdomains-top100000.txt",
+        "-w", "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt", # we need web-content list here too
         "-u", f"{scheme}://FUZZ.{domain}",   
         "-mc", "all",
         "-of", "json",
@@ -49,6 +60,7 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="ht
     ]
 
     print(f"[DEBUG] Running command: {' '.join(ffuf_cmd)}")
+    print(f"Remember to use a bigger wordlist for better results! The default is just the top 5000 subdomains.")
 
     try:
         result = subprocess.run(
@@ -73,6 +85,7 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="ht
         print(f"[+] Found {len(subdomains)} subdomains:")
         for subdomain in subdomains:
             print(f"    - {subdomain}")
+        _append_unique(recon_data, "subdomains", subdomains)
     else:
         print("[*] No subdomains found.")
 

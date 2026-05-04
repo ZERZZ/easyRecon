@@ -3,3 +3,9 @@ gitdump:
   dump_directory: /home/matt/thmlabs/enum/
 
 # This should be expanded to be all reporting eventually.
+
+# Things that should be configurable here:
+# Reporting, output formats.
+# AI Prompt templates / custom prompts for analysis.
+# Choice of AI for ollama and eventually other providers.
+# Wordlists for dirbust / subdomain enum. 

@@ -6,7 +6,17 @@ from utils.output import print
 from modules.hashcrack import crack_hash
 
 
-def run_asrep_roast(domain, dc_ip, users, verbose=False, aggressive=False):
+def _append_unique(recon_data, key, values):
+    if recon_data is None or values is None:
+        return
+    if not isinstance(values, list):
+        values = [values]
+    data_list = recon_data.setdefault(key, [])
+    for value in values:
+        if value and value not in data_list:
+            data_list.append(value)
+
+def run_asrep_roast(domain, dc_ip, users, verbose=False, aggressive=False, recon_data=None):
 
     if not users:
         print("[*] No users available for AS-REP roasting.")
@@ -51,6 +61,8 @@ def run_asrep_roast(domain, dc_ip, users, verbose=False, aggressive=False):
 
         if hashes:
             print("[+] AS-REP hashes found.")
+            if recon_data is not None:
+                _append_unique(recon_data, "interesting_findings", [f"AS-REP roastable hash: {h}" for h in hashes])
 
             # only if aggressive is on; this slightly crossing over into forbidden in OSCP
             if aggressive:
