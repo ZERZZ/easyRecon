@@ -5,10 +5,19 @@ import re
 import requests
 import random
 import string
+import yaml
 from difflib import SequenceMatcher
 from datetime import datetime
 
 from utils.output import print
+
+
+def load_config():
+    try:
+        with open("config/settings.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {}
 
 
 def _parse_json_results(results):
@@ -125,9 +134,12 @@ def run_dirbuster(target, hostname=None, show_output=False, recon_data=None):
         stdout_opt = None if show_output else subprocess.DEVNULL
         stderr_opt = None if show_output else subprocess.DEVNULL
 
+        config = load_config()
+        wordlist = config.get('wordlists', {}).get('dirbuster', '/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt')
+
         command = [
             "feroxbuster",
-            "-w", "/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt",
+            "-w", wordlist,
             "-u", scan_target,
             "-o", output_file,
             "-f",

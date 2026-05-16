@@ -2,6 +2,8 @@ import subprocess
 import tempfile
 import os
 
+## this hasnt been used much as its uncommon but this should eventually be migrated to john
+
 # AS REP ROASTING CRACKING.... IF WE NEED TO CRACK MORE THAN JUST AS-REPS, WE CAN EXPAND THIS FUNCTION TO ACCEPT DIFFERENT HASH TYPES AND MODES
 def crack_hash(hash_value, mode="18200", wordlist="/usr/share/wordlists/rockyou.txt"):
 

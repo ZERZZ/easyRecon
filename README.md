@@ -54,6 +54,10 @@ impacket
 ldapsearch
 rpcclient
 searchsploit
+ollama
+[RustScan (recommended/optional)](https://github.com/bee-san/RustScan/releases)
+NetExec
+bloodhound-python
 ```
 
 These tools should be available in your system PATH for full functionality.
@@ -113,6 +117,8 @@ EasyRecon is built around a **modular enumeration pipeline**, allowing different
 - RPC anonymous connection attempt with `enumdomusers` enumeration
 - FTP anonymous connection attempt and **analysis of accessible files**
 - AS-REP roasting and optional hash cracking with `--aggressive`
+- MSSQL authenticated enumeration and analysis using `NetExec / Impacket`
+- BloodHound AD graph collection and automated attack path analysis
 
 ## Network Enumeration
 
@@ -214,5 +220,8 @@ Potential future enhancements for EasyRecon include:
 - Additional Active Directory attack techniques
 - Improved AI-assisted analysis and reduction of noisy output
 - Improved CVE lookup / suggestions, less noise
+- Improved bloodhound json analysis / attack path suggestion. 
+- Improved mssql enumeration parsing. 
 - Improved output reporting
 - Additional service enumeration modules
+- Packaged into easyrecon, maybe PyPI in future 

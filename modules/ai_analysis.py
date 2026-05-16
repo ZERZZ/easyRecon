@@ -2,19 +2,31 @@ import json
 import threading
 import requests
 from requests.exceptions import RequestException
+import yaml
 from utils.output import print
+
+
+def load_config():
+    try:
+        with open("config/settings.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {}
 
 
 # preload the model so it's ready when we need it (we should make this earlier i think)
 def preload_model_async(verbose: bool = False) -> None:
     """Preload the local Ollama model in the background."""
 
+    config = load_config()
+    model = config.get('ai', {}).get('model', 'phi3')
+
     def _preload():
         try:
             requests.post(
                 "http://localhost:11434/api/generate",
                 json={
-                    "model": "phi3",
+                    "model": model,
                     "prompt": "Ready.",
                     "stream": False
                 },
@@ -48,49 +60,37 @@ def analyze_recon(data: dict, ai_enabled: bool = False) -> None:
 def build_ai_prompt(data: dict) -> str:
     """Build compact prompt with strict completion rules."""
 
+    config = load_config()
+    ai_config = config.get('ai', {})
+    prompt_template = ai_config.get('prompt', 
+        "You are a penetration testing decision engine. Analyze the provided recon data and provide actionable next steps."
+    )
+
     recon_json = json.dumps(data, separators=(",", ":"), sort_keys=True)
 
-    return (
-        "You are a penetration testing decision engine.\n"
-        "Only use the provided recon data.\n"
-        "Do not explain concepts. Do not be generic.\n"
-        "Do not include anything not supported by the data.\n\n"
-
-        "OUTPUT FORMAT (STRICT):\n"
-        "Return ONLY 3 steps.\n"
-        "Each step must be actionable and based ONLY on detected services.\n\n"
-
-        "FORMAT:\n"
-        "1. ...\n"
-        "2. ...\n"
-        "3. ...\n\n"
-
-        "RULES:\n"
-        "- No scanning advice unless missing data requires it\n"
-        "- No repetition\n"
-        "- No filler text\n"
-        "- Keep each line concise\n"
-        "- Do NOT expand summarized or truncated arrays (e.g. '... and another 99 users')\n"
-        "- Only use explicitly listed items from recon data\n\n"
-
-        f"{recon_json}"
-    )
+    return f"{prompt_template}\n{recon_json}"
 
 
 # ai call with phi3/120s time/streaming/raw text
 def call_local_ai(prompt: str):
     """Call Ollama safely and return raw text."""
 
+    config = load_config()
+    ai_config = config.get('ai', {})
+    model = ai_config.get('model', 'phi3')
+    num_predict = ai_config.get('num_predict', 120)
+    temperature = ai_config.get('temperature', 0.2)
+
     try:
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "phi3",
+                "model": model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "num_predict": 120,
-                    "temperature": 0.2
+                    "num_predict": num_predict,
+                    "temperature": temperature
                 }
             },
             timeout=120

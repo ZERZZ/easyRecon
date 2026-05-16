@@ -1,5 +1,14 @@
 # EasyRecon Changelog
 
+### v1.9 - May 16, 2026
+- Added bloodhound.py which collects and analyses AD data.
+- Added mssql_enum.py which performs RID cycling / basic enumeration.
+- Updated settings.yaml to include wordlists and AI analysis customisability.
+- Updated testcreds.py to include testing for ms-sql.
+- Updated smbenum.py to use credentials to authenticate and enumeration if provided in --test-creds.
+- Integrated optional RustScan usage for initial port discovery, significantly increasing efficiency. 
+- Fixed vhostenum.py false negative; now correctly identifies vhost length.  
+
 ### v1.8 - May 4, 2026
 - Added cve_lookup.py module, which looks up CVEs/exploits on nvd.nist/ExploitDB (needs refining drastically).
 - Updated technology_stack.py to include data collected by Wappalyzer. 

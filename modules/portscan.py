@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 import re
 import requests
 import urllib3
+import shutil
 
 from utils.output import print
 
@@ -19,6 +20,35 @@ def _append_unique(recon_data, key, values):
             data_list.append(value)
 
 
+def _run_rustscan(target, show_output=False):
+    """Run RustScan for port discovery and extract open ports."""
+    try:
+        result = subprocess.run(
+            ["rustscan", "-a", target, "--ulimit", "5000"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        
+        output = result.stdout if result.stdout else ""
+        ports = []
+        
+        # parse RustScan output
+        for line in output.split('\n'):
+            if line.startswith('Open '):
+                
+                parts = line.replace('Open ', '').strip().split(':')
+                if len(parts) >= 2:
+                    port = parts[-1].strip()
+                    if port and port not in ports:
+                        ports.append(port)
+        
+        return ports
+    
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+
+
 def run_portscan(target, show_output=False, recon_data=None):
     print(f"[*] Running nmap against {target}...")
 
@@ -26,16 +56,30 @@ def run_portscan(target, show_output=False, recon_data=None):
         stdout_opt = None if show_output else subprocess.DEVNULL
         stderr_opt = None if show_output else subprocess.DEVNULL
 
-        # step 1: Full port discovery
-        subprocess.run(
-            ["nmap", "-p-", "--min-rate", "1000", "-T4", "--noninteractive", "-oX", "port_discovery.xml", target],
-            check=True,
-            stdout=stdout_opt,
-            stderr=stderr_opt
-        )
-
-        # step 2: extract discovered ports
-        ports = extract_open_ports("port_discovery.xml")
+        # check if RustScan is available for faster port discovery
+        rustscan_available = shutil.which("rustscan") is not None
+        
+        # step 1: Port discovery
+        if rustscan_available:
+            print("[*] Using RustScan for port discovery...")
+            ports = _run_rustscan(target, show_output)
+            if not ports:
+                print("[!] RustScan failed to discover ports, falling back to Nmap...")
+                subprocess.run(
+                    ["nmap", "-p-", "--min-rate", "1000", "-T4", "--noninteractive", "-oX", "port_discovery.xml", target],
+                    check=True,
+                    stdout=stdout_opt,
+                    stderr=stderr_opt
+                )
+                ports = extract_open_ports("port_discovery.xml")
+        else:
+            subprocess.run(
+                ["nmap", "-p-", "--min-rate", "1000", "-T4", "--noninteractive", "-oX", "port_discovery.xml", target],
+                check=True,
+                stdout=stdout_opt,
+                stderr=stderr_opt
+            )
+            ports = extract_open_ports("port_discovery.xml")
 
         if not ports:
             print("[!] No open ports discovered.")
@@ -43,12 +87,12 @@ def run_portscan(target, show_output=False, recon_data=None):
 
         ports_str = ",".join(ports)
 
-        # step 3: Targeted service detection on discovered ports
+        # step 2: Targeted service detection on discovered ports
         subprocess.run(
             ["nmap", "-sS", "-sV", "-sC", "-T4", "--noninteractive", "-oX", "scan.xml", "-p", ports_str, target],
             check=True,
-            stdout=stdout_opt,
-            stderr=stderr_opt
+            stdout=None if show_output else subprocess.DEVNULL,
+            stderr=None if show_output else subprocess.DEVNULL
         )
 
         results = parse_nmap_xml("scan.xml", target)

@@ -7,6 +7,10 @@ from utils.output import section, print
 
 ## also no need to add creds to recon data; remove in future it adds nothing, just log successful logins. 
 
+## username split is naive and will fail if password contains a colon
+
+## username / password should be split in main once, not in each module
+
 def _append_unique(recon_data, key, values):
     if recon_data is None or values is None:
         return
@@ -193,5 +197,38 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
         except Exception as e:
             print(f"[!] WinRM test error: {e}")
+
+    # MSSQL
+    if "1433" in port_list:
+        print("\n[*] Attempting MSSQL authentication...")
+
+        cmd = [
+            "impacket-mssqlclient",
+            f"{username}:{password}@{target}"
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                input="exit\n",
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                print("[+] MSSQL authentication successful!")
+                if recon_data is not None:
+                    _append_unique(recon_data, "credentials", f"{username}:{password}")
+                    _append_unique(recon_data, "authenticated_services", "mssql")
+
+            else:
+                print("[-] MSSQL authentication failed.")
+
+                if verbose:
+                    print(result.stderr)
+
+        except Exception as e:
+            print(f"[!] MSSQL test error: {e}")
 
     print("\n[*] Credential testing completed.")

@@ -13,6 +13,8 @@ from modules.asrep_roast import run_asrep_roast
 from modules.testcreds import run_testcreds
 from modules.nfsenum import run_nfsenum
 from modules.grpcenum import run_grpcenum
+from modules.mssql_enum import run_mssql_enum
+from modules.bloodhound import run_bloodhound
 from modules.ai_analysis import analyze_recon, preload_model_async
 
 from utils.output import section, banner as print_banner, print
@@ -94,6 +96,7 @@ SERVICE_MAP = {
     "rpc": ["msrpc", "rpcbind"],
     "nfs": ["nfs"],
     "grpc": ["grpc"],
+    "mssql": ["ms-sql-s", "microsoft-sql-s", "mssql"]
 }
 
 
@@ -176,7 +179,7 @@ def main():
         "techstack": lambda: run_tech_stack(web_targets[0], hostname, ports, recon_data)
         if web_targets else print("[*] No web service detected."),
 
-        "smbenum": lambda: run_smbenum(target, args.verbose, recon_data)
+        "smbenum": lambda: run_smbenum(target, args.verbose, recon_data, args.test_creds)
         if has_service_or_port(ports, "smb", 445)
         else print("[*] SMB not detected."),
 
@@ -187,6 +190,10 @@ def main():
         "rpcenum": lambda: run_rpcenum(target, args.verbose, recon_data)
         if has_service_or_port(ports, "rpc", 135)
         else print("[*] RPC not detected."),
+
+        "mssqlenum": lambda: run_mssql_enum(target, ports, args.test_creds if args.test_creds else None, args.verbose, recon_data)
+        if has_service_or_port(ports, "mssql", 1433)
+        else print("[*] MSSQL not detected."),
 
         "nfsenum": lambda: run_nfsenum(target, args.verbose, recon_data)
         if has_service_or_port(ports, "nfs", 2049)
@@ -231,10 +238,10 @@ def main():
         print(ftp_anonymous)
 
     if git_repo:
-        section("Exposed Git Repository")
+        section("Exposed Git Repository / Git Dump")
         print(git_repo)
 
-        section("Git Dump")
+        print()
         git_path = git_repo.splitlines()[0].strip()
         run_gitdump(git_path)
 
@@ -246,7 +253,7 @@ def main():
 
     if has_service_or_port(ports, "smb", 445):
         section("SMB Enumeration")
-        smb_results = run_smbenum(target, args.verbose, recon_data)
+        smb_results = run_smbenum(target, args.verbose, recon_data, args.test_creds)
         if smb_results and smb_results.get("users"):
             for u in smb_results["users"]:
                 add_unique(recon_data, "users", u)
@@ -276,6 +283,16 @@ def main():
             users.update(rpc_results["users"])
     else:
         print("[*] No RPC service detected.")
+
+    if has_service_or_port(ports, "mssql", 1433):
+        section("MSSQL Enumeration")
+        mssql_results = run_mssql_enum(target, ports, args.test_creds if args.test_creds else None, args.verbose, recon_data)
+        if mssql_results and mssql_results.get("users"):
+            for u in mssql_results["users"]:
+                add_unique(recon_data, "users", u)
+            users.update(mssql_results["users"])
+    else:
+        print("[*] No MSSQL service detected.")
 
     if users:
         section("Discovered Users")
@@ -332,6 +349,18 @@ def main():
             run_dirbuster(url, hostname, args.verbose, recon_data)
     else:
         print("[*] No HTTP/HTTPS services detected.")
+    
+    if args.test_creds and domain:
+        username, password = args.test_creds.split(":", 1)
+
+        run_bloodhound(
+            target,
+            username,
+            password,
+            domain,
+            args.verbose,
+            recon_data
+        )
 
     if args.ai_analysis:
         preload_model_async(verbose=args.verbose)

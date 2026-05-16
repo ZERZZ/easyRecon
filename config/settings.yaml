@@ -2,10 +2,46 @@ gitdump:
   # The directory where the git repositories will be dumped
   dump_directory: /home/matt/thmlabs/enum/
 
-# This should be expanded to be all reporting eventually.
+  # This should be expanded to be all reporting eventually. (and output formats)
 
-# Things that should be configurable here:
-# Reporting, output formats.
-# AI Prompt templates / custom prompts for analysis.
-# Choice of AI for ollama and eventually other providers.
-# Wordlists for dirbust / subdomain enum. 
+ai:
+  # AI provider (currently only ollama supported // dont change this unless you know what you're doing)
+  provider: ollama
+  # Model name for ollama
+  model: phi3
+  # Maximum number of tokens to predict
+  num_predict: 120
+  # Temperature for response randomness
+  temperature: 0.2
+  # AI prompt template (will be combined with recon data JSON)
+  prompt: |
+    You are a penetration testing decision engine.
+    Only use the provided recon data.
+    Do not explain concepts. Do not be generic.
+    Do not include anything not supported by the data.
+
+    OUTPUT FORMAT (STRICT):
+    Return ONLY 3 steps.
+    Each step must be actionable and based ONLY on detected services.
+
+    FORMAT:
+    1. ...
+    2. ...
+    3. ...
+
+    RULES:
+    - No scanning advice unless missing data requires it
+    - No repetition
+    - No filler text
+    - Keep each line concise
+    - Do NOT expand summarized or truncated arrays (e.g. '... and another 99 users')
+    - Only use explicitly listed items from recon data
+
+wordlists:
+  # Wordlist for directory busting
+  dirbuster: /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+  # Wordlist for subdomain enumeration
+  subdomain: /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+  # Wordlist for virtual host enumeration
+  vhost: /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+

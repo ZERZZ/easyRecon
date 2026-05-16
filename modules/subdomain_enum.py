@@ -4,11 +4,20 @@ import random
 import urllib3
 import json
 import ipaddress
+import yaml
 
 from utils.output import print
 
 # suppress SSL warnings for direct IP HTTPS probing
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def load_config():
+    try:
+        with open("config/settings.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {}
 
 
 def _append_unique(recon_data, key, values):
@@ -50,9 +59,12 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="ht
     else:
         print(f"[*] Baseline content length: {baseline_size}")
 
+    config = load_config()
+    wordlist = config.get('wordlists', {}).get('subdomain', '/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt')
+
     ffuf_cmd = [
         "ffuf",
-        "-w", "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt", # we need web-content list here too
+        "-w", wordlist, # we need web-content list here too
         "-u", f"{scheme}://FUZZ.{domain}",   
         "-mc", "all",
         "-of", "json",

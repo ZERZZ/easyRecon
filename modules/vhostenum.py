@@ -5,6 +5,8 @@ import re
 import random
 import urllib3
 import json
+import yaml
+import base64
 
 from utils.output import print
 
@@ -12,31 +14,48 @@ from utils.output import print
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+def load_config():
+    try:
+        with open("config/settings.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {}
+
+
 def _append_unique(recon_data, key, values):
     if recon_data is None or values is None:
         return
+
     if not isinstance(values, list):
         values = [values]
+
     data_list = recon_data.setdefault(key, [])
+
     for value in values:
         if value and value not in data_list:
             data_list.append(value)
 
 
 def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=None):
-    """Run vhost enumeration against the target IP using Host headers."""
+    """Run vhost enumeration against the target using Host headers."""
 
-    # strip prepended subdomain if present 
+    # skip vhost enumeration for raw IP targets
+    if re.match(r'^\d+\.\d+\.\d+\.\d+$', domain):
+        print("[*] Target is an IP address. Skipping vhost enumeration.")
+        return []
+
+    # strip prepended subdomain if present
     parts = domain.split(".")
     if len(parts) > 2:
         domain = ".".join(parts[1:])
 
-    # extract scheme / host from main
+    # extract scheme / host from scan target
     scheme = scan_target.split("://")[0]
     host = scan_target.split("://")[1].split("/")[0]
 
-    # Get IP to send requests to
+    # resolve host to IP if needed
     ip_target = None
+
     if re.match(r'^\d+\.\d+\.\d+\.\d+$', host):
         ip_target = host
     else:
@@ -45,10 +64,12 @@ def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=Non
         except socket.gaierror:
             ip_target = None
 
-    target_host = domain if domain else host
+    # use IP directly if available to avoid DNS resolution issues
+    target_host = ip_target if ip_target else host
     target_url = f"{scheme}://{target_host}/"
 
     baseline_size = get_baseline_content_length(domain, target_url)
+
     if baseline_size is None:
         print("[!] Could not determine baseline content length. Skipping vhost enumeration.")
         return []
@@ -56,9 +77,19 @@ def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=Non
     print(f"[*] Baseline content length: {baseline_size}")
     print(f"[*] Running vhost enumeration for {domain} against {target_url}...")
 
+    config = load_config()
+
+    wordlist = config.get(
+        'wordlists',
+        {}
+    ).get(
+        'vhost',
+        '/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt'
+    )
+
     ffuf_cmd = [
         "ffuf",
-        "-w", "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
+        "-w", wordlist,
         "-u", target_url,
         "-H", f"Host: FUZZ.{domain}",
         "-fs", str(baseline_size),
@@ -76,9 +107,11 @@ def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=Non
             text=True,
             timeout=120
         )
+
     except subprocess.TimeoutExpired:
         print("[!] ffuf scan timed out.")
         return []
+
     except FileNotFoundError:
         print("[!] ffuf not found. Make sure it's installed.")
         return []
@@ -90,9 +123,16 @@ def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=Non
 
     if vhosts:
         print(f"[+] Found {len(vhosts)} vhosts:")
+
         for vhost in vhosts:
             print(f"    - {vhost}")
-        _append_unique(recon_data, "interesting_findings", [f"Virtual host: {vhost}" for vhost in vhosts])
+
+        _append_unique(
+            recon_data,
+            "interesting_findings",
+            [f"Virtual host: {vhost}" for vhost in vhosts]
+        )
+
     else:
         print("[*] No vhosts found.")
 
@@ -100,7 +140,7 @@ def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=Non
 
 
 def get_baseline_content_length(domain, target_url):
-    """Get Content-Length for a non-existent vhost to filter catch-all noise."""
+    """Get baseline response size for a fake vhost."""
 
     fake_host = f"nonexistent-{random.randint(1, 10000000)}.{domain}"
 
@@ -113,40 +153,59 @@ def get_baseline_content_length(domain, target_url):
             verify=False
         )
 
-        if 'Content-Length' in resp.headers:
-            return int(resp.headers['Content-Length'])
-
         return len(resp.content)
 
-    except requests.exceptions.RequestException:
+    except Exception as e:
+        print(f"[!] Baseline request failed: {e}")
         return None
 
 
 def parse_ffuf_output(output, domain):
-    """Extract discovered vhosts from ffuf output."""
+    """Extract discovered vhosts from ffuf JSON output."""
+
     vhosts = []
 
     try:
         data = json.loads(output)
+
         for entry in data.get("results", []):
+
             fuzz_value = entry.get("input", {}).get("FUZZ")
-            if fuzz_value:
-                vhost = f"{fuzz_value}.{domain}"
-                if vhost not in vhosts:
-                    vhosts.append(vhost)
+
+            if not fuzz_value:
+                continue
+
+            # ffuf may store FUZZ values base64 encoded
+            try:
+                fuzz_value = base64.b64decode(fuzz_value).decode().strip()
+            except Exception:
+                fuzz_value = fuzz_value.strip()
+
+            vhost = f"{fuzz_value}.{domain}"
+
+            if vhost not in vhosts:
+                vhosts.append(vhost)
+
         return vhosts
+
     except json.JSONDecodeError:
         pass
 
+    # fallback plaintext parsing
     for line in output.split('\n'):
+
         line = line.strip()
 
         if not line:
             continue
 
         parts = line.split()
-        for part in parts:
-            if part.endswith('.' + domain) and part not in vhosts:
-                vhosts.append(part)
+
+        if parts:
+            fuzz_value = parts[0]
+            vhost = f"{fuzz_value}.{domain}"
+
+            if vhost not in vhosts:
+                vhosts.append(vhost)
 
     return vhosts

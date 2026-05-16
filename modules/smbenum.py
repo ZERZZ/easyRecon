@@ -15,7 +15,7 @@ def _append_unique(recon_data, key, values):
             data_list.append(value)
 
 
-def run_smbenum(target, show_output=False, recon_data=None):
+def run_smbenum(target, show_output=False, recon_data=None, creds=None): 
     print(f"[*] Running SMB enumeration against {target}...")
 
     results = {
@@ -31,11 +31,28 @@ def run_smbenum(target, show_output=False, recon_data=None):
     stdout_opt = None if show_output else subprocess.PIPE
     stderr_opt = None if show_output else subprocess.DEVNULL
 
+    username = None  
+    password = None  
+
+    if creds: 
+        try:
+            username, password = creds.split(":", 1)
+        except ValueError:
+            print("[!] Invalid creds format. Expected user:pass")
+            creds = None
+
     # Step 1: Check if SMB is reachable via smbclient
     try:
         smb_list_cmd = [
             "smbclient",
-            "-N",
+        ]
+
+        if creds: 
+            smb_list_cmd += ["-U", f"{username}%{password}"]
+        else:
+            smb_list_cmd += ["-N"]
+
+        smb_list_cmd += [
             "-L",
             f"//{target}"
         ]
@@ -79,7 +96,14 @@ def run_smbenum(target, show_output=False, recon_data=None):
 
                         test_cmd = [
                             "smbclient",
-                            "-N",
+                        ]
+
+                        if creds:
+                            test_cmd += ["-U", f"{username}%{password}"]
+                        else:
+                            test_cmd += ["-N"]
+
+                        test_cmd += [
                             f"//{target}/{share}",
                             "-c",
                             "ls"
@@ -101,7 +125,14 @@ def run_smbenum(target, show_output=False, recon_data=None):
                             # test write access
                             write_cmd = [
                                 "smbclient",
-                                "-N",
+                            ]
+
+                            if creds:
+                                write_cmd += ["-U", f"{username}%{password}"]
+                            else:
+                                write_cmd += ["-N"]
+
+                            write_cmd += [
                                 f"//{target}/{share}",
                                 "-c",
                                 "put /dev/null easyrecon_write_test.tmp"
@@ -151,16 +182,19 @@ def run_smbenum(target, show_output=False, recon_data=None):
     if results["smb_reachable"]:
         try:
             print("[*] Attempting RID brute force enumeration (null session)...")
+
             rid_cmd = [
                 "crackmapexec",
                 "smb",
                 target,
-                "-u",
-                ".",
-                "-p",
-                "",
-                "--rid-brute"
             ]
+
+            if creds:
+                rid_cmd += ["-u", username, "-p", password]
+            else:
+                rid_cmd += ["-u", ".", "-p", ""]
+
+            rid_cmd += ["--rid-brute"]
 
             rid_proc = subprocess.run(
                 rid_cmd,
