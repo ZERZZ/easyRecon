@@ -2,19 +2,10 @@ import subprocess
 import os
 
 from utils.output import print
+from utils.findings import add_discovery, add_note, add_misconfiguration
 
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-def run_nfsenum(target, show_output=False, recon_data=None):
+def run_nfsenum(target, show_output=False):
 
     print(f"[*] Running NFS enumeration against {target}...")
 
@@ -64,6 +55,13 @@ def run_nfsenum(target, show_output=False, recon_data=None):
         for e in exports:
             print(f"    {e}")
 
+        # add to new reporting
+        add_discovery(
+            "NFS exports discovered",
+            exports,
+            source="nfs"
+        )
+
         if show_output:
             print(output)
 
@@ -79,9 +77,6 @@ def run_nfsenum(target, show_output=False, recon_data=None):
         choice = input("[?] Mount discovered NFS shares to /tmp? (y/N): ").strip().lower()
 
         if choice != "y":
-            if recon_data is not None:
-                if results.get("exports"):
-                    _append_unique(recon_data, "interesting_findings", [f"NFS export: {export}" for export in results["exports"]])
             return results
 
         for share in exports:
@@ -112,13 +107,22 @@ def run_nfsenum(target, show_output=False, recon_data=None):
                     results["mounted"].append(mount_point)
                     print(f"[+] Mounted {share} -> {mount_point}")
 
-                    # get UID owner of mount
+                    # add note where it was mounted and the share name
+                    add_note(
+                        f"{share} mounted to {mount_point}",
+                        source="nfs"
+                    )
+
+                    # get uid ownership
                     stat_proc = subprocess.run(
                         ["ls", "-ld", mount_point],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL,
                         text=True
                     )
+
+                    owner = None
+                    uid = None
 
                     if stat_proc.stdout:
                         parts = stat_proc.stdout.split()
@@ -134,8 +138,17 @@ def run_nfsenum(target, show_output=False, recon_data=None):
                                 )
 
                                 uid = uid_proc.stdout.strip()
+
                                 if uid:
                                     discovered_uids.add((owner, uid))
+
+                                    # if uid impersonation possible report it
+                                    add_misconfiguration(
+                                        "NFS UID impersonation possible",
+                                        f"Owner: {owner}, UID: {uid}, Share: {share}",
+                                        source="nfs"
+                                    )
+
                             except Exception:
                                 pass
 
@@ -162,7 +175,7 @@ def run_nfsenum(target, show_output=False, recon_data=None):
     except KeyboardInterrupt:
         print("\n[!] Mounting cancelled by user.")
 
-    # print hint once at end (skip if UID matches current user)
+    # UID impersonation hint 
     filtered_uids = [(owner, uid) for owner, uid in discovered_uids if uid != current_uid]
 
     if filtered_uids:
@@ -175,11 +188,5 @@ def run_nfsenum(target, show_output=False, recon_data=None):
             print(f"    sudo usermod -u {uid} james")
             print(f"    sudo groupmod -g {uid} james")
             print("    sudo su james")
-
-    if recon_data is not None:
-        if results.get("exports"):
-            _append_unique(recon_data, "interesting_findings", [f"NFS export: {export}" for export in results["exports"]])
-        if results.get("mounted"):
-            _append_unique(recon_data, "notes", [f"Mounted NFS share: {mnt}" for mnt in results["mounted"]])
 
     return results

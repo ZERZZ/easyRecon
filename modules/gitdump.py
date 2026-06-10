@@ -3,6 +3,7 @@ import subprocess
 import yaml
 import re
 
+from utils.findings import add_misconfiguration, add_note
 from utils.output import print
 
 INTERESTING_FILES = [
@@ -28,6 +29,15 @@ INTERESTING_FILES = [
     "users.sql"
 ]
 
+HIGH_VALUE = [
+    ".env",
+    "config",
+    "db",
+    "backup",
+    ".sql"
+]
+
+
 def load_config():
     try:
         with open("config/settings.yaml", "r") as f:
@@ -35,13 +45,16 @@ def load_config():
     except Exception:
         return {}
 
+
 def ensure_http(repo_url):
     if not repo_url.startswith("http"):
         repo_url = f"http://{repo_url}"
     return repo_url
 
+
 def sanitize_name(name):
     return re.sub(r'[^a-zA-Z0-9_.-]', '_', name)
+
 
 def is_interesting_file(filename):
     filename_lower = filename.lower()
@@ -50,12 +63,22 @@ def is_interesting_file(filename):
             return True
     return False
 
+
+def is_high_value_file(filename):
+    filename_lower = filename.lower()
+    for pattern in HIGH_VALUE:
+        if pattern in filename_lower:
+            return True
+    return False
+
+
 def scan_repository(repo_path, results):
     for root, dirs, files in os.walk(repo_path):
         for file in files:
             if is_interesting_file(file):
                 full_path = os.path.join(root, file)
                 results["interesting_files"].append(full_path)
+
 
 def dump_repository(repo_url, dump_directory, show_output=False):
     try:
@@ -76,6 +99,7 @@ def dump_repository(repo_url, dump_directory, show_output=False):
         print(f"[!] git-dumper error: {e}")
         return False
 
+
 def clone_remote_repo(remote_url, dump_directory, show_output=False):
     try:
         if show_output:
@@ -95,11 +119,13 @@ def clone_remote_repo(remote_url, dump_directory, show_output=False):
         print(f"[!] git clone error: {e}")
         return False
 
+
 def extract_remote_repo(repo_output):
     matches = re.findall(r'(https?://[^\s]+\.git)', repo_output)
     if matches:
         return matches[0]
     return None
+
 
 def run_gitdump(repo_output, show_output=False):
     print("[*] Processing exposed Git repository...")
@@ -127,7 +153,7 @@ def run_gitdump(repo_output, show_output=False):
     config = load_config()
     dump_base = config.get("gitdump", {}).get("dump_directory")
     if not dump_base:
-        dump_base = os.getcwd()  # default to current directory if blank
+        dump_base = os.getcwd()
 
     repo_folder = sanitize_name(repo_url)
     dump_directory = os.path.join(dump_base, repo_folder)
@@ -157,14 +183,36 @@ def run_gitdump(repo_output, show_output=False):
         return results
 
     results["repo_dumped"] = True
+
+    # SIGNAL 1: if dump work we should report it
+    add_misconfiguration(
+        "Exposed .git repository accessible and successfully dumped",
+        source="gitdump"
+    )
+
     print(f"[+] Repository stored in {dump_directory}")
 
     scan_repository(dump_directory, results)
 
     if results["interesting_files"]:
         print("[+] Interesting files discovered:")
+
         for f in results["interesting_files"]:
             print(f" - {f}")
+
+            # SIGNAL 2: all interesting files go to notes
+            add_note(
+                f"Interesting git file found: {f}",
+                source="gitdump"
+            )
+
+            # SIGNAL 3: high value file detection
+            if is_high_value_file(f):
+                add_note(
+                    f"High-value repository file detected: {f}",
+                    source="gitdump"
+                )
+
     else:
         print("[-] No interesting files found.")
 

@@ -9,6 +9,7 @@ import yaml
 import base64
 
 from utils.output import print
+from utils.report import add_subdomain
 
 # suppress SSL warnings for direct IP HTTPS probing
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -22,21 +23,7 @@ def load_config():
         return {}
 
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-
-    if not isinstance(values, list):
-        values = [values]
-
-    data_list = recon_data.setdefault(key, [])
-
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-
-def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=None):
+def run_vhost_enum(domain, scan_target, ports, show_output=False):
     """Run vhost enumeration against the target using Host headers."""
 
     # skip vhost enumeration for raw IP targets
@@ -126,12 +113,7 @@ def run_vhost_enum(domain, scan_target, ports, show_output=False, recon_data=Non
 
         for vhost in vhosts:
             print(f"    - {vhost}")
-
-        _append_unique(
-            recon_data,
-            "interesting_findings",
-            [f"Virtual host: {vhost}" for vhost in vhosts]
-        )
+            add_subdomain(vhost)
 
     else:
         print("[*] No vhosts found.")

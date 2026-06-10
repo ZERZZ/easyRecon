@@ -58,6 +58,8 @@ ollama
 [RustScan (recommended/optional)](https://github.com/bee-san/RustScan/releases)
 NetExec
 bloodhound-python
+certipy-ad
+dig
 ```
 
 These tools should be available in your system PATH for full functionality.
@@ -101,6 +103,7 @@ EasyRecon is built around a **modular enumeration pipeline**, allowing different
 
 - TCP port scanning with service detection
 - SSL certificate hostname extraction
+- DNS enumeration using `dig` (PTR, AXFR, NS/MX records, subdomain/domain enum)
 - Technology stack detection using Wappalyzer / sourcecode / headers inspection 
 - Identified technologies mapped to known vulnerabilities and potential exploits
 - HTTP header analysis
@@ -119,6 +122,7 @@ EasyRecon is built around a **modular enumeration pipeline**, allowing different
 - AS-REP roasting and optional hash cracking with `--aggressive`
 - MSSQL authenticated enumeration and analysis using `NetExec / Impacket`
 - BloodHound AD graph collection and automated attack path analysis
+- Vulnerable certificate check with `Certipy-AD`
 
 ## Network Enumeration
 
@@ -128,6 +132,22 @@ EasyRecon is built around a **modular enumeration pipeline**, allowing different
 ## AI Analysis (Experimental)
 
 - Optional AI-assisted analysis to help interpret reconnaissance output and highlight interesting findings
+
+## Output System
+
+EasyRecon now generates a structured `recon.json` file post-scan and a high level summary.
+
+This file contains:
+- Open ports and detected services
+- Discovered subdomains
+- Web endpoints
+- Credentials 
+- Structured findings (vulnerabilities, misconfigurations, etc.)
+
+This enables:
+- Post-scan analysis
+- AI-assisted summarisation
+- External parsing / automation
 
 ---
 
@@ -167,20 +187,22 @@ python3 main.py <target>
 ### Options
 
 ```bash
--o <module>      Run a specific module (e.g. smbenum)
+--only <module>      Run a specific module (e.g. smbenum)
 -v               Enable verbose output
 --aggressive     Attempt to crack discovered AS‑REP hashes automatically
+--output-name    Choose a name for the output file
+--dev            Skip initial port scan and load from scan.xml
 ```
 
 ### Example
 ```bash
-python3 main.py 10.10.10.10 -o smbenum -v
+python3 main.py 10.10.10.10 --only smbenum -v
 ```
 
 ### Full command syntax:
 
 ```bash
-python3 main.py <target> [-o all|portscan|dirbuster|vhostenum|subdomains|techstack|smbenum|ldapenum|rpcenum|ftpenum|nfsenum] [-v] [--aggressive] [-ai]
+python3 main.py <target> [--only all|portscan|dnsenum|dirbuster|vhostenum|subdomains|techstack|smbenum|ldapenum|rpcenum|ftpenum|nfsenum] [-v] [--aggressive] [-ai] [--dev] [--output-name]
 ```
 
 ---
@@ -191,7 +213,7 @@ python3 main.py <target> [-o all|portscan|dirbuster|vhostenum|subdomains|techsta
 Run SMB enumeration with verbose output:
 
 ```bash
-python3 main.py 10.10.10.10 -o smbenum -v
+python3 main.py 10.10.10.10 --only smbenum -v
 ```
 
 # Example Outputs
@@ -217,11 +239,10 @@ When `--aggressive` is enabled, EasyRecon will attempt to crack discovered hashe
 
 Potential future enhancements for EasyRecon include:
 
-- Additional Active Directory attack techniques
-- Improved AI-assisted analysis and reduction of noisy output
-- Improved CVE lookup / suggestions, less noise
-- Improved bloodhound json analysis / attack path suggestion. 
-- Improved mssql enumeration parsing. 
-- Improved output reporting
-- Additional service enumeration modules
+- Additional Active Directory attack techniques 
+- Improved AI-assisted analysis and reduction of noisy output 
+- Improved CVE lookup / suggestions, less noise 
+- Improved bloodhound json analysis / attack path suggestion  
+- Improved output reporting 
+- Additional service enumeration modules 
 - Packaged into easyrecon, maybe PyPI in future 

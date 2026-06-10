@@ -1,5 +1,42 @@
 # EasyRecon Changelog
 
+### v2.0 - June 10, 2026
+
+#### Added
+- Added certipy.py; uses certipy-ad to extract and parse vulnerable certificates in AD environments. 
+- Added dns_enum.py which enumerates domains/subdomains using dig.
+- Added a suggestion to attempt password spraying of same user, same pass if users discovered. 
+- Added an additional check to portscan.py to prevent invalid domains being passed to other modules.
+- Added additional 'interesting rights' to bloodhound.py.
+- Added multi-list support for dirbuster.py; now by default also checks web-content/common.
+- Added a --dev mode which reads directly from previous scan.xml to make development more efficient. 
+- Added a high value file scan check to gitdump.py.
+- Added output directory with optional setting to choose location.
+
+#### Improved
+- Updated testcreds.py to include testing for SSH. 
+- Updated portscan.py http detection logic to be more robust and not miss non-standard port http services.
+- Updated ldapenum.py to use credentials for enumeration if provided.
+- Updated ldapenum.py to check and extract 'info' and 'description' fields for interesting artifacts.
+- Updated testcreds.py to run a test command for WinRM to verify authentication and reduce false positives. 
+- Updated bloodhound.py to link and create attack chains from misconfigured ACLs.
+- Updated dirbuster.py parsing logic to extract only extremely valuable endpoints.
+- Updated ftpenum.py to test for write access, added additional interesting files.
+- Updated grpcenum.py to actually enumerate services and methods.
+
+#### Fixed
+- Fixed an issue in portscan.py where incorrect parsing of RustScan output meant ports were missed.
+- Fixed certipy.py parser crash caused by inconsistent template JSON structure. 
+- Disabled cve_lookup.py as it currently just produces noise. Needs refinement.
+- Fixed mssql_enum.py RID cycling user parsing & enumeration.
+- Fixed as-rep module hanging on non-AD environments, introduced a timeout.
+- Retired legacy append_unique & recon_data.
+
+#### Refactored
+- Migrated core recon state to structured recon.json output for improved post scan analysis.
+- Improved findings system, reducing noise and identifying actionable findings.
+
+
 ### v1.9 - May 16, 2026
 - Added bloodhound.py which collects and analyses AD data.
 - Added mssql_enum.py which performs RID cycling / basic enumeration.

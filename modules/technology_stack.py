@@ -6,6 +6,7 @@ import json
 import os
 
 from utils.output import print
+from utils.findings import add_note
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -31,18 +32,7 @@ def add_tech(tech, versions, name, ver=None):
         versions[name] = ver
 
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-
-def run_tech_stack(target, hostname, open_ports, recon_data=None):
+def run_tech_stack(target, hostname, open_ports):
     print("[*] Running technology stack detection...")
 
     tech = set()
@@ -162,14 +152,20 @@ def run_tech_stack(target, hostname, open_ports, recon_data=None):
         if non_versioned:
             print(f"    - {', '.join(non_versioned)}")
 
-        if recon_data is not None:
-            detected = []
-            for t in sorted(tech):
-                if t in versions:
-                    detected.append(f"{t} {versions[t]}")
-                else:
-                    detected.append(t)
-            recon_data.setdefault("notes", []).append(f"Detected technologies: {', '.join(detected)}")
+        detected = []
+        for t in sorted(tech):
+            if t in versions:
+                detected.append(f"{t} {versions[t]}")
+            else:
+                detected.append(t)
+
+        # add to new reporting
+        add_note(
+            "Detected technologies",
+            ", ".join(detected),
+            source="tech_stack"
+        )
+
     else:
         print("[*] No identifiable technology detected.")
 

@@ -2,20 +2,10 @@ import subprocess
 import re
 
 from utils.output import print
+from utils.findings import add_discovery, add_misconfiguration
 
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-
-def run_smbenum(target, show_output=False, recon_data=None, creds=None): 
+def run_smbenum(target, show_output=False, creds=None): 
     print(f"[*] Running SMB enumeration against {target}...")
 
     results = {
@@ -25,7 +15,8 @@ def run_smbenum(target, show_output=False, recon_data=None, creds=None):
         "smb_reachable": False,    
         "cme_output": "",
         "users": [],
-        "writable_shares": []
+        "writable_shares": [],
+        "readable_shares": []
     }
 
     stdout_opt = None if show_output else subprocess.PIPE
@@ -121,6 +112,7 @@ def run_smbenum(target, show_output=False, recon_data=None, creds=None):
                         # check for access denied errors
                         if "NT_STATUS_ACCESS_DENIED" not in test_output and test_proc.returncode == 0:
                             readable = True
+                            results["readable_shares"].append(share)
 
                             # test write access
                             write_cmd = [
@@ -162,9 +154,35 @@ def run_smbenum(target, show_output=False, recon_data=None, creds=None):
                     except Exception:
                         pass
 
+                # NEW MISCONFIGS FINDINGS GOING TO JSON.
+                if results["smb_reachable"] and not creds:
+
+                    # avoid duplic
+                    if not results["readable_shares"]:
+                        results["readable_shares"] = shares
+
+                    add_misconfiguration(
+                        "SMB null session access (enumeration exposure)",
+                        f"Anonymous SMB session exposed shares: {', '.join(shares)}",
+                        "smbenum"
+                    )
+
+                    add_misconfiguration(
+                        "SMB null session access (enumerable shares summary)",
+                        f"{len(results['readable_shares'])} shares accessible via null session: {', '.join(results['readable_shares'])}",
+                        "smbenum"
+                    )
+
                 if results["writable_shares"]:
+                    add_misconfiguration(
+                        "Writable SMB shares",
+                        f"Writable shares discovered: {', '.join(results['writable_shares'])}",
+                        "smbenum"
+                    )
+
                     print("[!] Writable SMB share detected")
                     print("[!] NTLM Theft via .lnk may be possible (use responder/NTLM_theft.py)")
+
             else:
                 # SMB reachable but no shares retrieved - still log this
                 print("[*] SMB reachable but no accessible shares found (may require authentication)")
@@ -206,8 +224,6 @@ def run_smbenum(target, show_output=False, recon_data=None, creds=None):
 
             rid_output = rid_proc.stdout or ""
 
-            # Do NOT print massive rid_output or store it all in results (Fixed)
-
             if rid_output:
                 # check for errors FIRST
                 ERROR_KEYWORDS = ["STATUS_", "denied", "failed", "error", "Error", "access denied"]
@@ -221,7 +237,7 @@ def run_smbenum(target, show_output=False, recon_data=None, creds=None):
                     users = []
                     
                     for line in rid_output.splitlines():
-                        # format 1: "1112: OVERWATCH\Charlie.Moss (SidTypeUser)"
+                        # format 1: "1112: OVERWATCH\Charlie.Moss (SidTypeUser)" FAKE USER BTW 
                         match1 = re.search(r"(\d+):\s+[A-Za-z0-9\-_]*\\([A-Za-z0-9\-_.]+)\s+\(SidTypeUser\)", line)
                         if match1:
                             user = match1.group(2)
@@ -248,17 +264,21 @@ def run_smbenum(target, show_output=False, recon_data=None, creds=None):
                         ):
                             continue
 
-                        if user not in users:
-                            users.append(user)
+                        users.append(user)
 
                     results["users"] = users
 
                     if users:
                         results["enumeration"] = True
                         print(f"[+] RID brute enumeration successful: enumerated {len(users)} users")
-                        
-                        # console output limit: only show first 10 users
-                        # rest will be written to users.txt (needs to be put into a report file)
+
+                        # add to new reporting
+                        add_discovery(
+                            "SMB users enumerated",
+                            f"{len(users)} user(s) discovered via RID brute force",
+                            "smbenum"
+                        )
+
                         for u in users[:10]:
                             print(u)
                         if len(users) > 10:
@@ -279,16 +299,5 @@ def run_smbenum(target, show_output=False, recon_data=None, creds=None):
             print(f"[!] RID brute error: {e}")
     else:
         print("[*] SMB not reachable - skipping RID brute force")
-
-    # append to recon data 
-    if recon_data is not None:
-        if results.get("smb_reachable"):
-            _append_unique(recon_data, "interesting_findings", "SMB service is reachable on target")
-        if results.get("connection"):
-            _append_unique(recon_data, "interesting_findings", "SMB null session: shares enumerated")
-        if results.get("users"):
-            _append_unique(recon_data, "interesting_findings", f"RID brute enumerated {len(results['users'])} users")
-        if results.get("writable_shares"):
-            _append_unique(recon_data, "interesting_findings", [f"Writable SMB share: {share}" for share in results["writable_shares"]])
 
     return results

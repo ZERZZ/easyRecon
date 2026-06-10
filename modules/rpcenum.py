@@ -2,19 +2,10 @@ import subprocess
 import re
 
 from utils.output import print
+from utils.report import add_user
+from utils.findings import add_discovery
 
-
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-def run_rpcenum(target, show_output=False, recon_data=None):
+def run_rpcenum(target, show_output=False):
     print(f"[*] Running RPC enumeration against {target}...")
 
     results = {
@@ -122,6 +113,14 @@ def run_rpcenum(target, show_output=False, recon_data=None):
                             continue
 
                         users.append(user)
+
+                        # add to new reporting
+                        add_user(user, source="rpc_enum")
+                        add_discovery(
+                            "RPC users enumerated",
+                            f"{len(users)} user(s) discovered via RID brute force",
+                            "rpcenum"
+                        )
 
                 results["users"] = users
 

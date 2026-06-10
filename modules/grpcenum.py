@@ -1,30 +1,19 @@
 import subprocess
 
 from utils.output import print
+from utils.findings import add_misconfiguration, add_note
 
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-def run_grpcenum(target, show_output=False, recon_data=None):
+def run_grpcenum(target, show_output=False):
     print(f"[*] Running gRPC enumeration against {target}...")
 
     results = {
         "grpc_detected": False,
         "services": {},
+        "rpc_definitions": {}
     }
 
-    stdout_opt = None if show_output else subprocess.PIPE
-    stderr_opt = None if show_output else subprocess.DEVNULL
-
-    # check grpcurl exists
+    # check grpcurl installed
     try:
         subprocess.run(
             ["which", "grpcurl"],
@@ -33,112 +22,91 @@ def run_grpcenum(target, show_output=False, recon_data=None):
             check=True
         )
     except subprocess.CalledProcessError:
-            _append_unique(recon_data, "interesting_findings", [f"gRPC service: {name}" for name in results["services"].keys()])
-
-    if recon_data is not None:
-        if results.get("grpc_detected") and results.get("services"):
-            _append_unique(recon_data, "interesting_findings", [f"gRPC service: {name}" for name in results["services"].keys()])
-
+        print("[!] grpcurl not installed")
+        add_note(
+            "gRPC enumeration skipped - grpcurl not installed",
+            source="grpcenum"
+        )
         return results
 
+    # run grpcurl list
     try:
-        # get services
-        cmd = [
-            "grpcurl",
-            "-plaintext",
-            f"{target}:50051",
-            "list"
-        ]
-
-        proc = subprocess.run(
-            cmd,
-            stdout=stdout_opt,
-            stderr=stderr_opt,
-            text=True
+        output = subprocess.getoutput(
+            f"grpcurl -plaintext {target}:50051 list"
         )
 
-        if proc.returncode != 0 or not proc.stdout:
-            print("[*] No gRPC services detected.")
-            return results
+        raw_lines = [
+            l.strip()
+            for l in output.splitlines()
+            if l.strip()
+        ]
 
-        services = [s.strip() for s in proc.stdout.splitlines() if s.strip()]
+        services = []
+
+        for line in raw_lines:
+            if "reflection" in line.lower():
+                continue
+            if "grpcurl" in line.lower():
+                continue
+            if line.startswith("grpc."):
+                continue
+
+            services.append(line)
+
+        services = list(set(services))
 
         if not services:
             print("[*] No gRPC services detected.")
             return results
 
+        # report it
         results["grpc_detected"] = True
 
+        add_misconfiguration(
+            "gRPC service exposed (plaintext endpoint discovered via grpcurl)",
+            source="grpcenum"
+        )
+
+        print("[+] gRPC services detected:")
+        for s in services:
+            print(f"  - {s}")
+
+        # enumerate services and methods
         for service in services:
-
-            if "reflection" in service.lower():
-                continue
-
-            print(f"[+] Found service: {service}")
-
             results["services"][service] = []
 
-            # enumerate methods
-            try:
+            add_note(
+                f"gRPC service discovered: {service}",
+                source="grpcenum"
+            )
 
-                method_cmd = [
-                    "grpcurl",
-                    "-plaintext",
-                    f"{target}:50051",
-                    "list",
-                    service
-                ]
 
-                method_proc = subprocess.run(
-                    method_cmd,
-                    stdout=stdout_opt,
-                    stderr=stderr_opt,
-                    text=True
+            method_output = subprocess.getoutput(
+                f"grpcurl -plaintext {target}:50051 list {service}"
+            )
+
+            methods = [
+                m.strip()
+                for m in method_output.splitlines()
+                if m.strip()
+            ]
+
+            for method in methods:
+                results["services"][service].append(method)
+
+                add_note(
+                    f"gRPC method: {method}",
+                    source="grpcenum"
                 )
 
-                if method_proc.stdout:
+            desc_output = subprocess.getoutput(
+                f"grpcurl -plaintext {target}:50051 describe {service}"
+            )
 
-                    methods = [
-                        m.strip()
-                        for m in method_proc.stdout.splitlines()
-                        if m.strip()
-                    ]
-
-                    for method in methods:
-                        results["services"][service].append(method)
-
-                        print(f"    └─ Method: {method}")
-
-            except Exception:
-                pass
-
-            # show rpc definitions
-            try:
-
-                describe_cmd = [
-                    "grpcurl",
-                    "-plaintext",
-                    f"{target}:50051",
-                    "describe",
-                    service
-                ]
-
-                describe_proc = subprocess.run(
-                    describe_cmd,
-                    stdout=stdout_opt,
-                    stderr=stderr_opt,
-                    text=True
-                )
-
-                if describe_proc.stdout:
-                    print("    └─ RPC Definition:")
-                    for line in describe_proc.stdout.splitlines():
-                        print(f"       {line}")
-
-            except Exception:
-                pass
+            if desc_output.strip():
+                results["rpc_definitions"][service] = desc_output.splitlines()
 
     except Exception:
-        pass
+        print("[!] gRPC enumeration failed")
 
     return results

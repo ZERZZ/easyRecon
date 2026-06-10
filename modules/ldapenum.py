@@ -2,20 +2,11 @@ import subprocess
 import re
 
 from utils.output import print
+from utils.findings import add_misconfiguration, add_note
+from utils.report import add_user
 
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-
-def run_ldapenum(target, show_output=False, recon_data=None):
+def run_ldapenum(target, show_output=False, creds=None):
     print(f"[*] Running LDAP enumeration against {target}...")
 
     results = {
@@ -31,6 +22,16 @@ def run_ldapenum(target, show_output=False, recon_data=None):
 
     stderr_opt = None if show_output else subprocess.DEVNULL
     ERROR_KEYWORDS = ["operationsError", "Operations error", "failed", "denied", "error", "Error"]
+
+    username = None
+    password = None
+
+    if creds:
+        try:
+            username, password = creds.split(":", 1)
+        except ValueError:
+            print("[!] Invalid creds format. Expected user:pass")
+            creds = None
 
     # step 1: attempt anonymous bind
     try:
@@ -59,6 +60,13 @@ def run_ldapenum(target, show_output=False, recon_data=None):
         if "result: 0 Success" in output and not any(err in output for err in ERROR_KEYWORDS):
             results["connection"] = True
             print("[+] Anonymous LDAP bind successful.")
+
+            # add misconfiguration finding for anonymous bind allowed
+            add_misconfiguration(
+                "Anonymous LDAP bind allowed",
+                source="ldapenum"
+            )
+
         else:
             results["error"] = "Anonymous LDAP bind failed"
             print("[-] Anonymous LDAP bind not allowed.")
@@ -92,15 +100,46 @@ def run_ldapenum(target, show_output=False, recon_data=None):
                 print(f"[*] Domain detected: {domain}")
                 results["domain"] = domain
 
-                # step 2.1: enumerate LDAP users
-                ldap_user_cmd = [
-                    "ldapsearch",
-                    "-x",
-                    "-H", f"ldap://{target}",
-                    "-b", domain_dn,
-                    "(objectClass=user)",
-                    "sAMAccountName"
-                ]
+                add_note(
+                    f"LDAP domain detected: {domain}",
+                    source="ldapenum"
+                )
+
+                # LDAP ENUMERATION WITH AUTHENTICATED BIND IF CREDS PROVIDED, OTHERWISE ANONYMOUS
+
+                if creds:
+                    print("[*] Using AUTHENTICATED LDAP enumeration...")
+
+                    bind_user = f"{username}@{domain}"
+
+                    ldap_user_cmd = [
+                        "ldapsearch",
+                        "-x",
+                        "-H", f"ldap://{target}",
+                        "-D", bind_user,
+                        "-w", password,
+                        "-b", domain_dn,
+                        "(&(objectClass=user)(|(description=*)(info=*)(comment=*)))",
+                        "sAMAccountName",
+                        "description",
+                        "info",
+                        "comment"
+                    ]
+
+                else:
+                    print("[*] Using ANONYMOUS LDAP enumeration...")
+
+                    ldap_user_cmd = [
+                        "ldapsearch",
+                        "-x",
+                        "-H", f"ldap://{target}",
+                        "-b", domain_dn,
+                        "(&(objectClass=user)(|(description=*)(info=*)(comment=*)))",
+                        "sAMAccountName",
+                        "description",
+                        "info",
+                        "comment"
+                    ]
 
                 ldap_user_proc = subprocess.run(
                     ldap_user_cmd,
@@ -120,51 +159,76 @@ def run_ldapenum(target, show_output=False, recon_data=None):
 
                     # Check for explicit errors BEFORE parsing
                     if any(err in ldap_user_output for err in ERROR_KEYWORDS):
-                        results["error"] = f"LDAP user enumeration failed: {[err for err in ERROR_KEYWORDS if err in ldap_user_output]}"
-                        print(f"[-] LDAP user enumeration failed: operations denied")
+                        results["error"] = "LDAP user/desc enumeration failed"
+                        print("[-] LDAP user/desc enumeration failed: operations denied")
                         return results
 
-                    users = []
+                    # Structured output
+                    current_user = None
+                    user_data = {}
+
+                    print("\n[+] LDAP user/desc enumeration successful.\n")
+                    print("[+] Discovered users with descriptions, info or comments:\n")
 
                     for line in ldap_user_output.splitlines():
-                        match = re.search(r"sAMAccountName:\s*(\S+)", line)
-                        if match:
-                            user = match.group(1)
 
-                            if (
-                                user.endswith("$")
-                                or user.startswith("$")
-                                or user.startswith("SM_")
-                                or user.startswith("HealthMailbox")
-                                or user.startswith("SystemMailbox")
-                                or user.startswith("Migration.")
-                                or user.startswith("DiscoverySearchMailbox")
-                                or user.startswith("FederatedEmail")
-                                or user.startswith("Exchange")
-                                or user in ["Guest", "DefaultAccount"]
-                            ):
-                                continue
+                        dn_match = re.match(r"^dn:\s*CN=([^,]+)", line)
+                        if dn_match:
+                            current_user = dn_match.group(1)
+                            user_data[current_user] = {}
+                            print(f"    {current_user}")
+                            continue
 
-                            users.append(user)
+                        if not current_user:
+                            continue
 
-                    results["users"] = users
+                        desc = re.search(r"description:\s*(.+)", line)
+                        if desc:
+                            user_data[current_user]["description"] = desc.group(1)
+                            print(f"      description: {desc.group(1)}")
 
-                    # Only mark enumeration success if we actually got valid users (for AI analysis, can adjust later)
-                    if users and ldap_user_proc.returncode == 0:
-                        results["enumeration"] = True
-                        print("[+] LDAP user enumeration successful.")
-                        print("[+] Discovered domain users:")
-                        for u in users:
-                            print(f"    {u}")
-                    else:
-                        results["error"] = "No valid LDAP users parsed"
-                        print(f"[-] LDAP user enumeration returned no valid users (possible error or no access)")
+                        info = re.search(r"info:\s*(.+)", line)
+                        if info:
+                            user_data[current_user]["info"] = info.group(1)
+                            print(f"      info: {info.group(1)}")
+
+                        comment = re.search(r"comment:\s*(.+)", line)
+                        if comment:
+                            user_data[current_user]["comment"] = comment.group(1)
+                            print(f"      comment: {comment.group(1)}")
+
+                    results["users"] = list(user_data.keys())
+                    results["enumeration"] = True
+
+                    # NOTES (users + attributes)
+                    for user, attrs in user_data.items():
+                        add_user(user, source="ldapenum")
+
+                        if "description" in attrs:
+                            add_note(
+                                f"{user} description: {attrs['description']}",
+                                source="ldapenum"
+                            )
+                        if "info" in attrs:
+                            add_note(
+                                f"{user} info: {attrs['info']}",
+                                source="ldapenum"
+                            )
+                        if "comment" in attrs:
+                            add_note(
+                                f"{user} comment: {attrs['comment']}",
+                                source="ldapenum"
+                            )
+
+                    print()
 
                 else:
-                    results["error"] = "LDAP user enumeration returned no output"
-                    print("[-] LDAP user enumeration returned no output.")
+                    results["error"] = "LDAP user/desc enumeration returned no output"
+                    print("[-] LDAP user/desc enumeration returned no output.")
 
                 # step 2.2: run GetADUsers
+                print("[*] Attempting to run GetADUsers....\n")
+
                 getad_cmd = [
                     "GetADUsers.py",
                     "-no-pass",
@@ -193,7 +257,7 @@ def run_ldapenum(target, show_output=False, recon_data=None):
                         if any(err in output for err in ERROR_KEYWORDS) or getad_proc.returncode != 0:
                             results["error"] = f"GetADUsers failed: {[err for err in ERROR_KEYWORDS if err in output]}"
                             print("[-] GetADUsers failed (access denied or error during search).")
-                        # only mark success if we have valid table data as below:
+
                         elif "Name" in output and "PasswordLastSet" in output and len(output.splitlines()) > 3:
                             results["enumeration"] = True
                             print("[+] GetADUsers enumeration successful.")

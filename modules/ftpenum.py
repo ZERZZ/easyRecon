@@ -1,6 +1,8 @@
 from ftplib import FTP, error_perm
+from io import BytesIO
 
 from utils.output import print
+from utils.findings import add_misconfiguration, add_note
 
 
 INTERESTING_EXTENSIONS = [
@@ -19,10 +21,11 @@ INTERESTING_EXTENSIONS = [
     ".conf",
     ".ini",
     ".log",
-    ".env"
+    ".env",
+    ".exe"
 ]
 
-## Add keyword search here in future ? feel like might be too much noise 
+## Add keyword search here in future ? feel like might be too much noise
 
 
 def is_interesting_file(filename):
@@ -69,24 +72,35 @@ def enumerate_directory(ftp, path, results):
             if is_interesting_file(item):
                 results["interesting_files"].append(full_path)
 
+# now test write access
+def test_write_access(ftp):
+    test_filename = ".ftp_write_test"
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
+    try:
+        ftp.storbinary(
+            f"STOR {test_filename}",
+            BytesIO(b"write_test")
+        )
 
-def run_ftpenum(target, show_output=False, recon_data=None):
+        try:
+            ftp.delete(test_filename)
+        except Exception:
+            pass
+
+        return True
+
+    except Exception:
+        return False
+
+
+def run_ftpenum(target, show_output=False):
     print(f"[*] Running FTP enumeration against {target}...")
 
     results = {
         "connection": False,
-        "enumeration": False, 
-        "error": None, 
+        "enumeration": False,
+        "writable": False,
+        "error": None,
         "directories": [],
         "interesting_files": []
     }
@@ -100,27 +114,49 @@ def run_ftpenum(target, show_output=False, recon_data=None):
         ftp.login("anonymous", "anonymous@")
 
         results["connection"] = True
+
         print("[+] Anonymous FTP login successful.\n")
 
-        # list first directories 
+        add_misconfiguration(
+            "Anonymous FTP login allowed",
+            source="ftpenum"
+        )
+
+        # test write access
+        if test_write_access(ftp):
+            results["writable"] = True
+
+            print("[!] Anonymous FTP write access allowed.\n")
+
+            add_misconfiguration(
+                "Anonymous FTP write access allowed",
+                source="ftpenum"
+            )
+
+        # list first directories
         try:
             root_items = ftp.nlst()
             dirs = []
 
             for item in root_items:
                 current_dir = ftp.pwd()
+
                 try:
                     ftp.cwd(item)
                     ftp.cwd(current_dir)
                     dirs.append(item)
+
                 except error_perm:
                     continue
 
             if dirs:
                 print("[+] Top-level directories:\n")
+
                 for d in dirs:
                     print(f" - {d}")
-                print("") 
+
+                print("")
+
         except Exception as e:
             print(f"[!] Error listing root directories: {e}")
 
@@ -128,13 +164,23 @@ def run_ftpenum(target, show_output=False, recon_data=None):
 
         ftp.quit()
 
-        # mark enumeration success only if we found interesting files (for ai analysis, should probably adjust later.)
+        # mark enumeration success only if we found interesting files
         if results["interesting_files"]:
             results["enumeration"] = True
+
             print("[+] Interesting files found:\n")
+
             for f in results["interesting_files"]:
                 print(f" - {f}")
+
             print("")
+
+            for path in results["interesting_files"][:10]:
+                add_note(
+                    f"Interesting FTP file: {path}",
+                    source="ftpenum"
+                )
+
         else:
             results["error"] = "No interesting files found"
             print("[-] No interesting files found.\n")
@@ -142,15 +188,9 @@ def run_ftpenum(target, show_output=False, recon_data=None):
     except error_perm as e:
         results["error"] = f"Anonymous FTP login failed: {e}"
         print(f"[-] Anonymous FTP login failed: {e}")
+
     except Exception as e:
         results["error"] = str(e)
         print(f"[!] FTP enumeration error: {e}")
-
-    if recon_data is not None:
-        if results.get("connection"):
-            _append_unique(recon_data, "interesting_findings", "Anonymous FTP login successful")
-        if results.get("interesting_files"):
-            results["enumeration"] = True
-            _append_unique(recon_data, "interesting_findings", [f"FTP interesting file: {path}" for path in results["interesting_files"]])
 
     return results

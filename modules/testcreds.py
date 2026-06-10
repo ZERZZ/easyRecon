@@ -5,23 +5,11 @@ from utils.output import section, print
 
 ## this is repetitive and can definitely be polished; expand to use other services / polish in future
 
-## also no need to add creds to recon data; remove in future it adds nothing, just log successful logins. 
-
 ## username split is naive and will fail if password contains a colon
 
 ## username / password should be split in main once, not in each module
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
+def run_testcreds(target, ports, cred_string, verbose=False):
 
     section("Credential Reuse Testing")
 
@@ -53,9 +41,6 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
             if result.returncode == 0:
                 print("[+] SMB authentication successful!")
-                if recon_data is not None:
-                    _append_unique(recon_data, "credentials", f"{username}:{password}")
-
             else:
                 print("[-] SMB authentication failed.")
 
@@ -87,9 +72,6 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
             if "230" in result.stdout:
                 print("[+] FTP authentication successful!")
-                if recon_data is not None:
-                    _append_unique(recon_data, "credentials", f"{username}:{password}")
-
             else:
                 print("[-] FTP authentication failed.")
 
@@ -119,9 +101,6 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
             if "dn:" in result.stdout.lower():
                 print("[+] LDAP authentication successful!")
-                if recon_data is not None:
-                    _append_unique(recon_data, "credentials", f"{username}:{password}")
-
             else:
                 print("[-] LDAP authentication failed.")
 
@@ -149,9 +128,6 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
             if "Cannot" not in result.stderr:
                 print("[+] RPC authentication successful!")
-                if recon_data is not None:
-                    _append_unique(recon_data, "credentials", f"{username}:{password}")
-
             else:
                 print("[-] RPC authentication failed.")
 
@@ -165,26 +141,32 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
     if "5985" in port_list or "5986" in port_list:
         print("\n[*] Attempting WinRM authentication...")
 
-        cmd = [
-            "evil-winrm",
-            "-i",
-            target,
-            "-u",
-            username,
-            "-p",
-            password
-        ]
-
         try:
+            import time
+            time.sleep(2)
+
+            cmd = [
+                "evil-winrm",
+                "-i",
+                target,
+                "-u",
+                username,
+                "-p",
+                password,
+                "-q"
+            ]
+
             result = subprocess.run(
                 cmd,
-                input="exit\n",
+                input="whoami\nexit\n",
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=25
             )
 
-            if "Evil-WinRM shell" in result.stdout or "PS" in result.stdout:
+            output = (result.stdout + result.stderr).lower()
+
+            if "error" not in output and "exception" not in output and "\\" in output:
                 print("[+] WinRM authentication successful!")
                 print("[+] You can connect using:")
                 print(f"    evil-winrm -i {target} -u {username} -p '{password}'")
@@ -218,10 +200,6 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
             if result.returncode == 0:
                 print("[+] MSSQL authentication successful!")
-                if recon_data is not None:
-                    _append_unique(recon_data, "credentials", f"{username}:{password}")
-                    _append_unique(recon_data, "authenticated_services", "mssql")
-
             else:
                 print("[-] MSSQL authentication failed.")
 
@@ -230,5 +208,33 @@ def run_testcreds(target, ports, cred_string, verbose=False, recon_data=None):
 
         except Exception as e:
             print(f"[!] MSSQL test error: {e}")
+
+    # SSH
+    if "22" in port_list:
+        print("\n[*] Attempting SSH authentication...")
+
+        cmd = [
+            "sshpass",
+            "-p", password,
+            "ssh",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "ConnectTimeout=5",
+            f"{username}@{target}",
+            "exit"
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                print("[+] SSH authentication successful!")
+            else:
+                print("[-] SSH authentication failed.")
+
+                if verbose:
+                    print(result.stderr.strip())
+
+        except Exception as e:
+            print(f"[!] SSH test error: {e}")
 
     print("\n[*] Credential testing completed.")

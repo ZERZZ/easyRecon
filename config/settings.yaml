@@ -1,8 +1,12 @@
+output:
+  # Base directory for all scan output files (users.txt, JSON reports, etc.)
+  directory: ./output
+
 gitdump:
-  # The directory where the git repositories will be dumped
+  # The directory where the git repositories will be dumped (needs to be moved to new output directory structure)
   dump_directory: /home/matt/thmlabs/enum/
 
-  # This should be expanded to be all reporting eventually. (and output formats)
+ 
 
 ai:
   # AI provider (currently only ollama supported // dont change this unless you know what you're doing)
@@ -13,7 +17,7 @@ ai:
   num_predict: 120
   # Temperature for response randomness
   temperature: 0.2
-  # AI prompt template (will be combined with recon data JSON)
+  # AI prompt template
   prompt: |
     You are a penetration testing decision engine.
     Only use the provided recon data.
@@ -38,10 +42,14 @@ ai:
     - Only use explicitly listed items from recon data
 
 wordlists:
-  # Wordlist for directory busting
-  dirbuster: /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+  # Wordlists for directory busting
+  dirbuster: 
+    - /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt
+    - /usr/share/seclists/Discovery/Web-Content/common.txt
+  
   # Wordlist for subdomain enumeration
   subdomain: /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+  
   # Wordlist for virtual host enumeration
   vhost: /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
 

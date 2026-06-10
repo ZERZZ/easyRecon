@@ -16,9 +16,12 @@ from modules.grpcenum import run_grpcenum
 from modules.mssql_enum import run_mssql_enum
 from modules.bloodhound import run_bloodhound
 from modules.ai_analysis import analyze_recon, preload_model_async
+from modules.certipy import run_certipy_enum
+from modules.dns_enum import run_dnsenum
 
 from utils.output import section, banner as print_banner, print
 from utils.banner import main_banner
+from utils import report, findings
 
 import re
 import json
@@ -33,21 +36,6 @@ def sanitize_target(target):
     target = target.split(':')[0]
     return target.strip()
 
-# recon data management (remove creds from here / testcreds; should be "successful_logins")
-def init_recon_data(target):
-    return {
-        "target": target,
-        "ip": target if is_ip_address(target) else "",
-        "open_ports": [],
-        "services": [],
-        "web_endpoints": [],
-        "subdomains": [],
-        "users": [],
-        "interesting_findings": [],
-        "credentials": [],
-        "notes": []
-    }
-
 
 def is_ip_address(value):
     try:
@@ -57,34 +45,15 @@ def is_ip_address(value):
         return False
 
 
-def add_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
+def collect_module_users(results, source):
+    """Collect users from module results and register them in report."""
+    if not results or not results.get("users"):
+        return results
 
-    if not isinstance(values, list):
-        values = [values]
+    for u in results["users"]:
+        report.add_user(u, source)
 
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-
-def write_summary(recon_data, target, verbose=False):
-    filename = f"{target}.json"
-    output_data = dict(recon_data)
-
-    if "users" in output_data and isinstance(output_data["users"], list):
-        user_list = output_data["users"]
-        if len(user_list) > 3:
-            output_data["users"] = user_list[:3] + [f"... and another {len(user_list) - 3} users"]
-
-    with open(filename, "w") as f:
-        json.dump(output_data, f, indent=4)
-
-    print(f"[*] JSON summary written to {filename}")
-    if verbose:
-        print(json.dumps(output_data, indent=4))
+    return results
 
 
 # SERVICE DETECTION LAYER (KEEP UPDATING)
@@ -96,7 +65,8 @@ SERVICE_MAP = {
     "rpc": ["msrpc", "rpcbind"],
     "nfs": ["nfs"],
     "grpc": ["grpc"],
-    "mssql": ["ms-sql-s", "microsoft-sql-s", "mssql"]
+    "mssql": ["ms-sql-s", "microsoft-sql-s", "mssql"],
+    "dns": ["domain"]
 }
 
 
@@ -123,30 +93,38 @@ def main():
 
     parser.add_argument('target')
     parser.add_argument(
-        '-o', '--only',
+        '--only',
         choices=[
-            'all', 'portscan', 'dirbuster', 'vhostenum',
+            'all', 'dnsenum', 'portscan', 'dirbuster', 'vhostenum',
             'subdomains', 'techstack', 'smbenum',
             'ldapenum', 'rpcenum', 'ftpenum', 'nfsenum', 'grpcenum'
         ],
-        default='all'
+        default='all',
+        help='Only run a single specified module'
+    )
+    parser.add_argument('-o', '--output-name',
+        help='Name the output target directory for users.txt'
     )
 
     parser.add_argument('-v', '--verbose', action='store_true')
     parser.add_argument('--aggressive', action='store_true')
     parser.add_argument('--test-creds')
     parser.add_argument('-ai', '--ai-analysis', action='store_true')
+    parser.add_argument('--dev', action='store_true', help='Use existing scan.xml instead of running portscan')
 
     args = parser.parse_args()
     target = sanitize_target(args.target)
     only = args.only
+    output_name = args.output_name or target
 
-    recon_data = init_recon_data(target)
+    # Initialize centralized report system
+    report.init_recon_state(target)
+
 
     main_banner()
     print_banner(target)
 
-    scan_results = run_portscan(target, args.verbose, recon_data)
+    scan_results = run_portscan(target, args.verbose, dev_mode=args.dev)
 
     ports = scan_results["ports"]
     hostname = scan_results.get("hostname") or target
@@ -158,52 +136,54 @@ def main():
     scheme = "https" if web_targets and web_targets[0].startswith("https://") else "http"
 
     if args.test_creds:
-        run_testcreds(target, ports, args.test_creds, args.verbose, recon_data)
-
-    users = set()
+        run_testcreds(target, ports, args.test_creds, args.verbose)
 
     # MODULE DISPATCH (NOW SERVICES)
     module_dispatch = {
         "portscan": lambda: None,
 
-        "ftpenum": lambda: run_ftpenum(target, args.verbose, recon_data)
+        "dnsenum": lambda: run_dnsenum(target, args.verbose)
+        if has_service_or_port(ports, "dns", 53)
+        else print("[*] DNS not detected."),
+
+        "ftpenum": lambda: run_ftpenum(target, args.verbose)
         if has_service_or_port(ports, "ftp", 21)
         else print("[*] FTP not detected."),
 
-        "vhostenum": lambda: run_vhost_enum(hostname, web_targets[0], ports, args.verbose, recon_data)
+        "vhostenum": lambda: run_vhost_enum(hostname, web_targets[0], ports, args.verbose)
         if web_targets else print("[*] No web service detected."),
 
-        "subdomains": lambda: run_subdomain_enum(hostname, web_targets[0], ports, args.verbose, scheme=scheme, recon_data=recon_data)
+        "subdomains": lambda: run_subdomain_enum(hostname, web_targets[0], ports, args.verbose, scheme=scheme)
         if web_targets else print("[*] No web service detected."),
 
-        "techstack": lambda: run_tech_stack(web_targets[0], hostname, ports, recon_data)
+        "techstack": lambda: run_tech_stack(web_targets[0], hostname, ports)
         if web_targets else print("[*] No web service detected."),
 
-        "smbenum": lambda: run_smbenum(target, args.verbose, recon_data, args.test_creds)
+        "smbenum": lambda: collect_module_users(run_smbenum(target, args.verbose, args.test_creds), "smbenum")
         if has_service_or_port(ports, "smb", 445)
         else print("[*] SMB not detected."),
 
-        "ldapenum": lambda: run_ldapenum(target, args.verbose, recon_data)
+        "ldapenum": lambda: collect_module_users(run_ldapenum(target, args.verbose, args.test_creds), "ldapenum")
         if has_service_or_port(ports, "ldap", 389)
         else print("[*] LDAP not detected."),
 
-        "rpcenum": lambda: run_rpcenum(target, args.verbose, recon_data)
+        "rpcenum": lambda: collect_module_users(run_rpcenum(target, args.verbose), "rpc")
         if has_service_or_port(ports, "rpc", 135)
         else print("[*] RPC not detected."),
 
-        "mssqlenum": lambda: run_mssql_enum(target, ports, args.test_creds if args.test_creds else None, args.verbose, recon_data)
+        "mssqlenum": lambda: collect_module_users(run_mssql_enum(target, ports, args.test_creds if args.test_creds else None, args.verbose), "mssql")
         if has_service_or_port(ports, "mssql", 1433)
         else print("[*] MSSQL not detected."),
 
-        "nfsenum": lambda: run_nfsenum(target, args.verbose, recon_data)
+        "nfsenum": lambda: run_nfsenum(target, args.verbose)
         if has_service_or_port(ports, "nfs", 2049)
         else print("[*] NFS not detected."),
 
-        "grpcenum": lambda: run_grpcenum(target, args.verbose, recon_data)
+        "grpcenum": lambda: run_grpcenum(target, args.verbose)
         if has_service_or_port(ports, "grpc", 50051)
         else print("[*] gRPC not detected."),
 
-        "dirbuster": lambda: [run_dirbuster(url, hostname, args.verbose, recon_data) for url in web_targets]
+        "dirbuster": lambda: [run_dirbuster(url, hostname, args.verbose) for url in web_targets]
     }
 
     if only != "all":
@@ -221,17 +201,25 @@ def main():
                 section("Exposed Git Repository")
                 print(git_repo)
 
-            write_summary(recon_data, target, args.verbose)
+            report.write_users_file(output_name)
+            report.write_recon_file(output_name)
             return
 
         module_dispatch[only]()
-        write_summary(recon_data, target, args.verbose)
+        report.write_users_file(output_name)
+        report.write_recon_file(output_name)
         return
 
     # FULL RUN (ALL MODULES) 
     section("Open Ports Found")
     for p in ports:
         print(f" - {p['port']}/{p['protocol']} ({p['service']})")
+
+    if has_service_or_port(ports, "dns", 53):
+        section("DNS Enumeration")
+        run_dnsenum(target, args.verbose)
+    else:
+        print("[*] No DNS service detected.")
 
     if ftp_anonymous:
         section("Anonymous FTP Login Allowed")
@@ -247,88 +235,80 @@ def main():
 
     if has_service_or_port(ports, "ftp", 21):
         section("FTP Enumeration")
-        run_ftpenum(target, args.verbose, recon_data)
+        run_ftpenum(target, args.verbose)
     else:
         print("[*] No FTP service detected.")
 
     if has_service_or_port(ports, "smb", 445):
         section("SMB Enumeration")
-        smb_results = run_smbenum(target, args.verbose, recon_data, args.test_creds)
-        if smb_results and smb_results.get("users"):
-            for u in smb_results["users"]:
-                add_unique(recon_data, "users", u)
-            users.update(smb_results["users"])
+        smb_results = collect_module_users(run_smbenum(target, args.verbose, args.test_creds), "smbenum")
     else:
         print("[*] No SMB service detected.")
 
     if has_service_or_port(ports, "ldap", 389):
         section("LDAP Enumeration")
-        ldap_results = run_ldapenum(target, args.verbose, recon_data)
-        if ldap_results:
-            if ldap_results.get("users"):
-                for u in ldap_results["users"]:
-                    add_unique(recon_data, "users", u)
-                users.update(ldap_results["users"])
-            if ldap_results.get("domain"):
-                domain = ldap_results["domain"]
+        ldap_results = collect_module_users(run_ldapenum(target, args.verbose, args.test_creds), "ldapenum")
+        if ldap_results and ldap_results.get("domain"):
+            domain = ldap_results["domain"]
     else:
         print("[*] No LDAP service detected.")
 
     if has_service_or_port(ports, "rpc", 135):
         section("RPC Enumeration")
-        rpc_results = run_rpcenum(target, args.verbose, recon_data)
-        if rpc_results and rpc_results.get("users"):
-            for u in rpc_results["users"]:
-                add_unique(recon_data, "users", u)
-            users.update(rpc_results["users"])
+        rpc_results = collect_module_users(run_rpcenum(target, args.verbose), "rpc")
     else:
         print("[*] No RPC service detected.")
 
     if has_service_or_port(ports, "mssql", 1433):
         section("MSSQL Enumeration")
-        mssql_results = run_mssql_enum(target, ports, args.test_creds if args.test_creds else None, args.verbose, recon_data)
-        if mssql_results and mssql_results.get("users"):
-            for u in mssql_results["users"]:
-                add_unique(recon_data, "users", u)
-            users.update(mssql_results["users"])
+        mssql_results = collect_module_users(run_mssql_enum(target, ports, args.test_creds if args.test_creds else None, args.verbose), "mssql")
     else:
         print("[*] No MSSQL service detected.")
 
-    if users:
+    sorted_users = report.get_users()
+    if sorted_users:
         section("Discovered Users")
-        sorted_users = sorted(users)
         for u in sorted_users:
             print(u)
-        try:
-            with open("users.txt", "w") as f:
-                f.write("\n".join(sorted_users) + "\n")
-            print(f"[*] Wrote {len(sorted_users)} users to users.txt")
-        except Exception as e:
-            print(f"[!] Failed to write users.txt: {e}")
+
+    try:
+        users_path = report.write_users_file(output_name)
+        recon_path = report.write_recon_file(output_name)
+        print(f"[*] Wrote {len(sorted_users)} users to {users_path}")
+        print(f"[*] Wrote recon data to {recon_path}")
+        if sorted_users:
+            print()
+            print("[*] Remember to try usernames as passwords:")
+            print("crackmapexec smb [dc] -u output/<name>/users.txt -p output/<name>/users.txt --continue-on-success" + "\n")
+    except Exception as e:
+        print(f"[!] Failed to write output files: {e}")
 
     if has_service_or_port(ports, "nfs", 2049):
         section("NFS Enumeration")
-        run_nfsenum(target, args.verbose, recon_data)
+        run_nfsenum(target, args.verbose)
     else:
         print("[*] No NFS service detected.")
 
     if has_service_or_port(ports, "grpc", 50051):
         section("gRPC Enumeration")
-        run_grpcenum(target, args.verbose, recon_data)
+        run_grpcenum(target, args.verbose)
     else:
         print("[*] No gRPC service detected.")
 
-    if users:
+    users_for_asrep = report.get_users()
+    if users_for_asrep:
         section("AS-REP Roasting")
-        run_asrep_roast(domain or hostname, target, list(users), verbose=args.verbose, aggressive=args.aggressive, recon_data=recon_data)
+        run_asrep_roast(domain or hostname, target, users_for_asrep, verbose=args.verbose, aggressive=args.aggressive)
 
     tech_results = {}
+
+    # Shouldnt be used at all until refined heavily. Currently just produces noise. (cve lookup that is)
     if web_targets:
         section("Technology Stack Detection")
-        tech_results = run_tech_stack(web_targets[0], hostname, ports, recon_data)
-        if tech_results.get("versions"):
-            section("CVE / Exploit Suggester")
-            run_cve_lookup(tech_results["versions"], recon_data)
+        tech_results = run_tech_stack(web_targets[0], hostname, ports)
+        #if tech_results.get("versions"):
+            #section("CVE / Exploit Suggester")
+            #run_cve_lookup(tech_results["versions"], recon_data)
 
     if hostname:
         section("Web Enumeration w/ Hostname")
@@ -336,17 +316,17 @@ def main():
 
         if web_targets:
             section("Subdomain Enumeration")
-            run_subdomain_enum(hostname, web_targets[0], ports, args.verbose, scheme=scheme, recon_data=recon_data)
+            run_subdomain_enum(hostname, web_targets[0], ports, args.verbose, scheme=scheme)
 
             section("VHost Enumeration")
-            run_vhost_enum(hostname, web_targets[0], ports, args.verbose, recon_data)
+            run_vhost_enum(hostname, web_targets[0], ports, args.verbose)
         else:
             print("[*] No web service detected.")
 
     if web_targets:
         section("Directory Enumeration")
         for url in web_targets:
-            run_dirbuster(url, hostname, args.verbose, recon_data)
+            run_dirbuster(url, hostname, args.verbose)
     else:
         print("[*] No HTTP/HTTPS services detected.")
     
@@ -358,22 +338,36 @@ def main():
             username,
             password,
             domain,
+            args.verbose
+        )
+    
+    if args.test_creds and domain:
+        username, password = args.test_creds.split(":", 1)
+
+        run_certipy_enum(
+            target,
+            domain,
+            target,
+            username,
+            password,
             args.verbose,
-            recon_data
         )
 
     if args.ai_analysis:
         preload_model_async(verbose=args.verbose)
 
-    write_summary(recon_data, target, args.verbose)
+    # Write final recon output and user list
+    try:
+        report.write_users_file(output_name)
+        report.write_recon_file(output_name)
+        print(f"\n[*] Final recon data written to output/{output_name}/recon.json")
+    except Exception as e:
+        print(f"[!] Failed to write final output: {e}")
+
+    report.print_summary()
 
     if args.ai_analysis:
-        section("AI Analysis") # sections like this should be in each module, so should this print below.
-        if args.verbose:
-            print("[WARNING] AI analysis is experimental and may be inaccurate. Always verify manually.")
-            print()
-            print("[AI] Thinking...", flush=True)
-        analyze_recon(recon_data, True)
+        analyze_recon(True)
 
 if __name__ == "__main__":
     main()

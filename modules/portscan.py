@@ -1,3 +1,4 @@
+import os
 import subprocess
 import xml.etree.ElementTree as ET
 import re
@@ -6,18 +7,9 @@ import urllib3
 import shutil
 
 from utils.output import print
+from utils.report import add_open_port, add_service
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
 
 
 def _run_rustscan(target, show_output=False):
@@ -35,13 +27,28 @@ def _run_rustscan(target, show_output=False):
         
         # parse RustScan output
         for line in output.split('\n'):
-            if line.startswith('Open '):
-                
-                parts = line.replace('Open ', '').strip().split(':')
-                if len(parts) >= 2:
-                    port = parts[-1].strip()
-                    if port and port not in ports:
-                        ports.append(port)
+            line = line.strip()
+
+            if "Open" in line or "open" in line:
+        
+                # try format: Open 10.0.0.1:3000
+                parts = line.replace("Open", "").replace("open", "").strip()
+
+                # extract port from ip:port style
+                if ":" in parts:
+                    try:
+                        port = parts.split(":")[-1].strip()
+                        if port.isdigit() and port not in ports:
+                            ports.append(port)
+                    except:
+                        pass
+
+        # fallback: raw number like "3000 open"
+        else:
+            match = re.findall(r'\b(\d{1,5})\b', parts)
+            for m in match:
+                if m.isdigit() and m not in ports:
+                    ports.append(m)
         
         return ports
     
@@ -49,7 +56,28 @@ def _run_rustscan(target, show_output=False):
         return []
 
 
-def run_portscan(target, show_output=False, recon_data=None):
+def run_portscan(target, show_output=False, dev_mode=False):
+    if dev_mode:
+        print("[*] DEV MODE: Skipping scan, loading existing scan.xml...")
+
+        if not os.path.exists("scan.xml"):
+            print("[!] scan.xml not found. Cannot continue in dev mode.")
+            return {"ports": [], "hostname": None, "web_targets": []}
+
+        results = parse_nmap_xml("scan.xml", target)
+
+        ports = [p["port"] for p in results["ports"]]
+        services = sorted({p.get("service") for p in results["ports"] if p.get("service")})
+
+        for p in ports:
+            add_open_port(p)
+
+        for s in services:
+            add_service(None, None, s)
+
+        print("[*] Loaded scan.xml successfully.")
+        return results
+    
     print(f"[*] Running nmap against {target}...")
 
     try:
@@ -97,22 +125,14 @@ def run_portscan(target, show_output=False, recon_data=None):
 
         results = parse_nmap_xml("scan.xml", target)
 
-        if recon_data is not None:
-            ports = [p["port"] for p in results["ports"]]
-            services = sorted({p.get("service") for p in results["ports"] if p.get("service")})
+        ports = [p["port"] for p in results["ports"]]
+        services = sorted({p.get("service") for p in results["ports"] if p.get("service")})
 
-            _append_unique(recon_data, "open_ports", ports)
-            _append_unique(recon_data, "services", services)
-            if results.get("ftp_anonymous"):
-                _append_unique(recon_data, "interesting_findings", "Anonymous FTP login allowed")
-            if results.get("git_repo"):
-                _append_unique(recon_data, "interesting_findings", "Exposed git repository detected")
-            if results.get("hostname") and results.get("hostname") != target:
-                _append_unique(recon_data, "notes", f"Detected hostname: {results['hostname']}")
-            if results.get("domain"):
-                _append_unique(recon_data, "notes", f"Detected domain: {results['domain']}")
-            if results.get("web_targets"):
-                _append_unique(recon_data, "notes", "Web service detected by nmap")
+        for p in ports:
+            add_open_port(p)
+
+        for s in services:
+            add_service(None, None, s)
 
         print("[*] Nmap scan completed.")
         return results
@@ -164,6 +184,9 @@ def is_valid_hostname(hostname, target):
         return False
 
     if hostname.endswith(".local") or hostname.endswith(".localdomain"):
+        return False
+    
+    if "." not in hostname:
         return False
 
     return True
@@ -324,16 +347,42 @@ def parse_nmap_xml(xml_file, target):
                     "service": service_name
                 })
 
-                # Detect web services (restricted to common web ports to avoid false positives)
-                if service_name in ["http", "https"] and port_id in web_ports:
-                    scheme = "https" if service_name == "https" or port_id == "443" else "http"
+                # skip certain ports that may have misleading HTTP responses; bad though to rely on ports, should be relying on service
+                if port_id in ["5985", "5986", "47001"]:
+                    continue
 
-                    if port_id == "80":
-                        web_targets.append(f"http://{target}")
-                    elif port_id == "443":
-                        web_targets.append(f"https://{target}")
-                    else:
-                        web_targets.append(f"{scheme}://{target}:{port_id}")
+                if service_name in ["http", "https"]:
+
+                    scheme = "https" if service_name == "https" or port_id in ["443", "8443"] else "http"
+                    url = f"{scheme}://{target}:{port_id}" if port_id not in ["80", "443"] else f"{scheme}://{target}"
+
+                    try:
+                        r = requests.get(url, timeout=3, verify=False, allow_redirects=True)
+
+                        content_type = r.headers.get("Content-Type", "").lower()
+                        server = r.headers.get("Server", "").lower()
+                        body_snip = (r.text or "")[:200].lower()
+
+                        is_httpapi = "microsoft-httpapi" in server
+
+                        looks_like_html = ("<html" in body_snip) or ("<!doctype html" in body_snip)
+                        content_textlike = ("html" in content_type or "text" in content_type)
+
+                        is_web_response = (
+                            r.status_code < 600 and
+                            (
+                                content_textlike or looks_like_html or
+                                r.status_code in [200, 301, 302, 401, 403, 400]
+                            )
+                            and not (is_httpapi and not content_textlike and not looks_like_html)
+                        )
+
+                        if is_web_response:
+                            web_targets.append(url)
+
+                    except requests.RequestException:
+                        if service_name == "http":
+                            web_targets.append(url)
 
                 ftp_anon_script = port.find("script[@id='ftp-anon']")
                 if ftp_anon_script is not None:
@@ -348,7 +397,7 @@ def parse_nmap_xml(xml_file, target):
             git_repo = output.strip()
             break
 
-    # Validate SSL hostname
+    # Validate SSL Hostname
     if not is_valid_hostname(hostname, target):
         hostname = None
 

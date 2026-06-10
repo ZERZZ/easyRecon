@@ -3,7 +3,9 @@ import threading
 import requests
 from requests.exceptions import RequestException
 import yaml
-from utils.output import print
+
+from utils.output import print, section
+from utils.report import get_recon_state
 
 
 def load_config():
@@ -44,10 +46,19 @@ def preload_model_async(verbose: bool = False) -> None:
 
 
 # main call
-def analyze_recon(data: dict, ai_enabled: bool = False) -> None:
+def analyze_recon(ai_enabled: bool = False) -> None:
     """Analyze recon data using local AI."""
     if not ai_enabled:
         return
+    
+    section("AI Analysis") 
+        
+    print("[WARNING] AI analysis is experimental and may be inaccurate. Always verify manually.")
+    print()
+    print("[AI] Thinking...", flush=True)
+
+
+    data = get_recon_state() 
 
     prompt = build_ai_prompt(data)
     result = call_local_ai(prompt)
@@ -77,6 +88,7 @@ def call_local_ai(prompt: str):
 
     config = load_config()
     ai_config = config.get('ai', {})
+
     model = ai_config.get('model', 'phi3')
     num_predict = ai_config.get('num_predict', 120)
     temperature = ai_config.get('temperature', 0.2)

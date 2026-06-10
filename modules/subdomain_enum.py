@@ -7,6 +7,7 @@ import ipaddress
 import yaml
 
 from utils.output import print
+from utils.report import add_subdomain
 
 # suppress SSL warnings for direct IP HTTPS probing
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -20,20 +21,9 @@ def load_config():
         return {}
 
 
-def _append_unique(recon_data, key, values):
-    if recon_data is None or values is None:
-        return
-    if not isinstance(values, list):
-        values = [values]
-    data_list = recon_data.setdefault(key, [])
-    for value in values:
-        if value and value not in data_list:
-            data_list.append(value)
-
-
-def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="http", recon_data=None):
+def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="http"):
     """Run DNS subdomain enumeration against the target domain."""
-    
+
     # skip if domain is IP address (obviously wont work. )
     try:
         ipaddress.ip_address(domain)
@@ -97,7 +87,8 @@ def run_subdomain_enum(domain, scan_target, ports, show_output=False, scheme="ht
         print(f"[+] Found {len(subdomains)} subdomains:")
         for subdomain in subdomains:
             print(f"    - {subdomain}")
-        _append_unique(recon_data, "subdomains", subdomains)
+            # add to new reporting
+            add_subdomain(subdomain)
     else:
         print("[*] No subdomains found.")
 

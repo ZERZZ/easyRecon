@@ -1,9 +1,11 @@
 import subprocess
 import os
 import json
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from utils.output import section, print
+from utils.findings import add_discovery
+from utils.report import _get_output_directory, _normalize_path_component, get_recon_state
 
 
 INTERESTING_RIGHTS = {
@@ -12,12 +14,14 @@ INTERESTING_RIGHTS = {
     "WriteDacl",
     "WriteOwner",
     "AllExtendedRights",
-    "Owns"
+    "Owns",
+    "WriteSPN",
+    "ReadGMSAPassword"
 }
 
 
 # BLOODHOUND COLLECTION MAIN FUNCTION
-def run_bloodhound(target, username, password, domain, verbose=False, recon_data=None):
+def run_bloodhound(target, username, password, domain, verbose=False):
 
     section("BloodHound Enumeration")
 
@@ -25,7 +29,16 @@ def run_bloodhound(target, username, password, domain, verbose=False, recon_data
         print("[!] No domain supplied. Skipping BloodHound collection.")
         return
 
-    output_dir = f"{domain.lower()}-bh"
+    # now output bloodhound output to output/<target>/bloodhound/ 
+    base_dir = _get_output_directory()
+
+    recon_state = get_recon_state()
+    target_name = recon_state.get("target") or target
+
+    safe_target = _normalize_path_component(target_name)
+
+    output_dir = os.path.join(base_dir, safe_target, "bloodhound")
+
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"[*] Output directory: {output_dir}")
@@ -58,15 +71,7 @@ def run_bloodhound(target, username, password, domain, verbose=False, recon_data
         # RUN ANALYSIS PIPELINE
         findings = run_bloodhound_analysis(output_dir, username)
 
-        if findings:
-
-            if recon_data is not None:
-                recon_data.setdefault("interesting_findings", [])
-                for f in findings:
-                    if f not in recon_data["interesting_findings"]:
-                        recon_data["interesting_findings"].append(f)
-
-        else:
+        if not findings:
             print("[*] No direct privilege escalation edges found.")
 
     except FileNotFoundError:
@@ -143,31 +148,117 @@ def build_user_group_map(data, username):
 def extract_acl_findings(data, attack_sids):
     findings = []
 
-    def scan(objects):
+    edges = defaultdict(list)
+    sid_to_name = {}
+
+    def register_objects(objects):
         for obj in objects:
-            target = obj.get("Properties", {}).get("name", "UNKNOWN_OBJECT")
+            sid = obj.get("ObjectIdentifier")
+            name = obj.get("Properties", {}).get("name", "UNKNOWN_OBJECT")
+            if sid:
+                sid_to_name[sid] = name
+
+    register_objects(data["users"])
+    register_objects(data["groups"])
+    register_objects(data["computers"])
+    register_objects(data["gpos"])
+    register_objects(data["ous"])
+
+    def build_edges(objects):
+        for obj in objects:
+            target_sid = obj.get("ObjectIdentifier")
+            target_name = obj.get("Properties", {}).get("name", "UNKNOWN_OBJECT")
 
             for ace in obj.get("Aces", []):
                 sid = ace.get("PrincipalSID")
                 right = ace.get("RightName")
 
-                if not sid or not right:
+                if not sid or not right or not target_sid:
                     continue
 
-                if sid in attack_sids and right in INTERESTING_RIGHTS:
-                    findings.append(f"[ACL] {right} over {target}")
+                if right in INTERESTING_RIGHTS:
+                    edges[sid].append((target_sid, right, target_name))
 
-    scan(data["users"])
-    scan(data["groups"])
-    scan(data["computers"])
-    scan(data["gpos"])
-    scan(data["ous"])
+    build_edges(data["users"])
+    build_edges(data["groups"])
+    build_edges(data["computers"])
+    build_edges(data["gpos"])
+    build_edges(data["ous"])
 
-    return list(dict.fromkeys(findings))
+    queue = deque()
+    visited = set(attack_sids)
+    parent = {}
+
+    for sid in attack_sids:
+        queue.append(sid)
+
+    while queue:
+        current_sid = queue.popleft()
+
+        for target_sid, right, target_name in edges.get(current_sid, []):
+
+            if target_sid not in visited:
+                visited.add(target_sid)
+                queue.append(target_sid)
+
+                parent[target_sid] = (current_sid, right, target_name)
+
+    if not parent:
+        return []
+
+    def depth(node):
+        d = 0
+        while node in parent:
+            node = parent[node][0]
+            d += 1
+        return d
+
+    end_node = max(parent.keys(), key=depth)
+
+    chain_nodes = []
+    trace = end_node
+
+    while trace in parent:
+        p_sid, r, t_name = parent[trace]
+        chain_nodes.append((p_sid, r, t_name))
+        trace = p_sid
+
+    chain_nodes = list(reversed(chain_nodes))
+
+    if not chain_nodes:
+        return []
+
+    output = []
+
+    root_sid = chain_nodes[0][0]
+    output.append(sid_to_name.get(root_sid, root_sid))
+
+    spine = "   |"
+
+    for i, (p_sid, r, t_name) in enumerate(chain_nodes):
+
+        if i == 0:
+            output.append(f"{spine}")
+            output.append(f"{spine}--[{r}]--> {t_name}")
+        else:
+            indent = spine + ("   " * i)
+
+            output.append(f"{indent}")
+            output.append(f"{indent}--[{r}]--> {t_name}")
+
+    attack_chain_str = "\n".join(output)
+
+    add_discovery(
+        "BloodHound Attack Chain Found",
+        attack_chain_str,
+        source="bloodhound"
+    )
+
+    return [attack_chain_str]
 
 
 # ANALYSIS PIPELINE
-def run_bloodhound_analysis(output_dir, username, recon_data=None):
+def run_bloodhound_analysis(output_dir, username):
 
     print("[*] Loading BloodHound dataset...")
     data = load_bloodhound_data(output_dir)
@@ -181,15 +272,10 @@ def run_bloodhound_analysis(output_dir, username, recon_data=None):
     findings = extract_acl_findings(data, attack_sids)
 
     if findings:
-        print("\n=== ATTACK PATHS FOUND ===")
-        for f in findings:
-            print(f"[!] {f}")
+        print("\n[+] Attack chain found ...")
 
-        if recon_data is not None:
-            recon_data.setdefault("interesting_findings", [])
-            for f in findings:
-                if f not in recon_data["interesting_findings"]:
-                    recon_data["interesting_findings"].append(f)
+        for f in findings:
+            print(f)
 
     else:
         print("[*] No interesting ACL attack paths found.")
